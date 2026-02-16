@@ -18,8 +18,10 @@ cp .env.example .env
 
 ```env
 ANTHROPIC_API_KEY=your_new_api_key_here
-ANTHROPIC_MODEL=claude-3-5-sonnet-latest
+ANTHROPIC_MODEL=
 ```
+
+`ANTHROPIC_MODEL` optional: если оставить пустым, проект сам подберет доступную модель.
 
 ## 2) Run CLI
 
