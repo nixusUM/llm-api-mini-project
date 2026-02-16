@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM API Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; }
+    textarea { width: 100%; min-height: 120px; }
+    button { margin-top: 12px; padding: 8px 12px; }
+    .card { background: #f3f3f3; border-radius: 8px; padding: 12px; margin-top: 16px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Claude API Mini Project</h1>
+  <form method="post">
+    <label for="prompt">Prompt:</label>
+    <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
+    <button type="submit">Send</button>
+  </form>
+
+  {% if answer %}
+  <h2>Response</h2>
+  <div class="card">{{ answer }}</div>
+  {% endif %}
+</body>
+</html>
