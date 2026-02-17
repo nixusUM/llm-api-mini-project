@@ -7,21 +7,50 @@
   <style>
     body { font-family: Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; }
     textarea { width: 100%; min-height: 120px; }
+    input { width: 100%; padding: 8px; box-sizing: border-box; }
     button { margin-top: 12px; padding: 8px 12px; }
+    .field { margin-top: 12px; }
     .card { background: #f3f3f3; border-radius: 8px; padding: 12px; margin-top: 16px; white-space: pre-wrap; }
+    .title { margin-top: 20px; margin-bottom: 8px; }
   </style>
 </head>
 <body>
   <h1>Claude API Mini Project</h1>
   <form method="post">
-    <label for="prompt">Prompt:</label>
+    <label for="prompt">Prompt (same for both requests):</label>
     <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
+
+    <div class="field">
+      <label for="format_instruction">Response format instruction:</label>
+      <input id="format_instruction" name="format_instruction" value="{{ format_instruction }}">
+    </div>
+
+    <div class="field">
+      <label for="length_limit">Max answer length (characters):</label>
+      <input id="length_limit" name="length_limit" value="{{ length_limit }}">
+    </div>
+
+    <div class="field">
+      <label for="ending_instruction">Explicit ending instruction:</label>
+      <input id="ending_instruction" name="ending_instruction" value="{{ ending_instruction }}">
+    </div>
+
+    <div class="field">
+      <label for="stop_sequence">Stop sequence (API level):</label>
+      <input id="stop_sequence" name="stop_sequence" value="{{ stop_sequence }}">
+    </div>
+
     <button type="submit">Send</button>
   </form>
 
-  {% if answer %}
-  <h2>Response</h2>
-  <div class="card">{{ answer }}</div>
+  {% if unconstrained_answer %}
+  <h2 class="title">Without limits</h2>
+  <div class="card">{{ unconstrained_answer }}</div>
+  {% endif %}
+
+  {% if constrained_answer %}
+  <h2 class="title">With limits</h2>
+  <div class="card">{{ constrained_answer }}</div>
   {% endif %}
 </body>
 </html>

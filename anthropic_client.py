@@ -37,12 +37,41 @@ def extract_text(message: object) -> str:
     return getattr(first_block, "text", "No text in model response.")
 
 
-def send_message(client: Anthropic, prompt: str, max_tokens: int, model: str) -> str:
-    message = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
+def build_request_kwargs(
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    stop_sequences: list[str] | None,
+    system_instruction: str | None,
+) -> dict:
+    request_kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if stop_sequences:
+        request_kwargs["stop_sequences"] = stop_sequences
+    if system_instruction:
+        request_kwargs["system"] = system_instruction
+    return request_kwargs
+
+
+def send_message(
+    client: Anthropic,
+    prompt: str,
+    max_tokens: int,
+    model: str,
+    stop_sequences: list[str] | None = None,
+    system_instruction: str | None = None,
+) -> str:
+    request_kwargs = build_request_kwargs(
+        model,
+        prompt,
+        max_tokens,
+        stop_sequences,
+        system_instruction,
     )
+    message = client.messages.create(**request_kwargs)
     return extract_text(message)
 
 
@@ -69,16 +98,35 @@ def is_model_not_found(exc: APIStatusError) -> bool:
     return exc.status_code == 404 and "model" in text
 
 
-def ask_claude(prompt: str, max_tokens: int = 250) -> str:
+def ask_claude(
+    prompt: str,
+    max_tokens: int = 250,
+    stop_sequences: list[str] | None = None,
+    system_instruction: str | None = None,
+) -> str:
     client = Anthropic(api_key=get_api_key())
     model = get_model_override()
     selected_model = model or PREFERRED_MODELS[0]
     try:
-        return send_message(client, prompt, max_tokens, selected_model)
+        return send_message(
+            client,
+            prompt,
+            max_tokens,
+            selected_model,
+            stop_sequences,
+            system_instruction,
+        )
     except APIStatusError as exc:
         if is_model_not_found(exc):
             fallback_model = resolve_model(client, model)
             if fallback_model != selected_model:
-                return send_message(client, prompt, max_tokens, fallback_model)
+                return send_message(
+                    client,
+                    prompt,
+                    max_tokens,
+                    fallback_model,
+                    stop_sequences,
+                    system_instruction,
+                )
         code = exc.status_code
         raise RuntimeError(f"Anthropic API error ({code}): {get_error_text(exc)}") from exc
