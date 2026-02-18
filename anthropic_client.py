@@ -33,8 +33,14 @@ def message_has_text(message: object) -> bool:
 def extract_text(message: object) -> str:
     if not message_has_text(message):
         return "Empty response from model."
-    first_block = message.content[0]
-    return getattr(first_block, "text", "No text in model response.")
+    text_chunks: list[str] = []
+    for block in message.content:
+        text = getattr(block, "text", "")
+        if text:
+            text_chunks.append(text)
+    if text_chunks:
+        return "\n".join(text_chunks)
+    return "No text in model response."
 
 
 def build_request_kwargs(
@@ -100,7 +106,7 @@ def is_model_not_found(exc: APIStatusError) -> bool:
 
 def ask_claude(
     prompt: str,
-    max_tokens: int = 250,
+    max_tokens: int = 900,
     stop_sequences: list[str] | None = None,
     system_instruction: str | None = None,
 ) -> str:

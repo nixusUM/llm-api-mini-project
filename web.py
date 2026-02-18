@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 def get_answer(
     prompt: str,
-    max_tokens: int = 250,
+    max_tokens: int = 900,
     stop_sequences: list[str] | None = None,
 ) -> str:
     try:
@@ -37,8 +37,8 @@ def as_stop_sequences(raw_value: str) -> list[str] | None:
 
 
 def token_limit_from_char_limit(char_limit: int) -> int:
-    estimated_tokens = (char_limit // 4) + 20
-    return max(40, min(estimated_tokens, 400))
+    estimated_tokens = (char_limit // 3) + 120
+    return max(200, min(estimated_tokens, 2000))
 
 
 def build_constrained_prompt(
@@ -62,9 +62,9 @@ def index():
     unconstrained_answer = ""
     constrained_answer = ""
     format_instruction = "Use exactly 3 bullet points."
-    length_limit = "220"
-    ending_instruction = "Finish with [END]."
-    stop_sequence = "[END]"
+    length_limit = "1200"
+    ending_instruction = "Finish with a short summary line."
+    stop_sequence = ""
 
     if request.method == "POST":
         prompt = request.form.get("prompt", "").strip()
@@ -75,13 +75,13 @@ def index():
 
         if prompt:
             unconstrained_answer = get_answer(prompt)
-            char_limit = parse_positive_int(length_limit, 220)
+            char_limit = parse_positive_int(length_limit, 1200)
             token_limit = token_limit_from_char_limit(char_limit)
             constrained_prompt = build_constrained_prompt(
                 prompt,
                 format_instruction or "Use exactly 3 bullet points.",
                 char_limit,
-                ending_instruction or "Finish with [END].",
+                ending_instruction or "Finish with a short summary line.",
             )
             constrained_answer = get_answer(
                 constrained_prompt,
