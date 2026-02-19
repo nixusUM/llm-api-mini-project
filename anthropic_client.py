@@ -49,6 +49,7 @@ def build_request_kwargs(
     max_tokens: int,
     stop_sequences: list[str] | None,
     system_instruction: str | None,
+    temperature: float | None,
 ) -> dict:
     request_kwargs = {
         "model": model,
@@ -59,6 +60,8 @@ def build_request_kwargs(
         request_kwargs["stop_sequences"] = stop_sequences
     if system_instruction:
         request_kwargs["system"] = system_instruction
+    if temperature is not None:
+        request_kwargs["temperature"] = temperature
     return request_kwargs
 
 
@@ -69,6 +72,7 @@ def send_message(
     model: str,
     stop_sequences: list[str] | None = None,
     system_instruction: str | None = None,
+    temperature: float | None = None,
 ) -> str:
     request_kwargs = build_request_kwargs(
         model,
@@ -76,6 +80,7 @@ def send_message(
         max_tokens,
         stop_sequences,
         system_instruction,
+        temperature,
     )
     message = client.messages.create(**request_kwargs)
     return extract_text(message)
@@ -83,6 +88,15 @@ def send_message(
 
 def list_model_ids(client: Anthropic) -> list[str]:
     return [model.id for model in client.models.list()]
+
+
+def get_available_models() -> list[str]:
+    client = Anthropic(api_key=get_api_key())
+    try:
+        model_ids = list_model_ids(client)
+        return model_ids or list(PREFERRED_MODELS)
+    except Exception:
+        return list(PREFERRED_MODELS)
 
 
 def resolve_model(client: Anthropic, override: str) -> str:
@@ -109,30 +123,57 @@ def ask_claude(
     max_tokens: int = 900,
     stop_sequences: list[str] | None = None,
     system_instruction: str | None = None,
+    temperature: float | None = None,
+    model_override: str | None = None,
 ) -> str:
+    text, _ = ask_claude_with_meta(
+        prompt=prompt,
+        max_tokens=max_tokens,
+        stop_sequences=stop_sequences,
+        system_instruction=system_instruction,
+        temperature=temperature,
+        model_override=model_override,
+    )
+    return text
+
+
+def ask_claude_with_meta(
+    prompt: str,
+    max_tokens: int = 900,
+    stop_sequences: list[str] | None = None,
+    system_instruction: str | None = None,
+    temperature: float | None = None,
+    model_override: str | None = None,
+) -> tuple[str, str]:
     client = Anthropic(api_key=get_api_key())
-    model = get_model_override()
-    selected_model = model or PREFERRED_MODELS[0]
+    env_model = get_model_override()
+    requested_model = (model_override or "").strip()
+    effective_override = requested_model or env_model
+    selected_model = effective_override or PREFERRED_MODELS[0]
     try:
-        return send_message(
-            client,
-            prompt,
-            max_tokens,
-            selected_model,
-            stop_sequences,
-            system_instruction,
+        answer = send_message(
+            client=client,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            model=selected_model,
+            stop_sequences=stop_sequences,
+            system_instruction=system_instruction,
+            temperature=temperature,
         )
+        return answer, selected_model
     except APIStatusError as exc:
         if is_model_not_found(exc):
-            fallback_model = resolve_model(client, model)
+            fallback_model = resolve_model(client, effective_override)
             if fallback_model != selected_model:
-                return send_message(
-                    client,
-                    prompt,
-                    max_tokens,
-                    fallback_model,
-                    stop_sequences,
-                    system_instruction,
+                answer = send_message(
+                    client=client,
+                    prompt=prompt,
+                    max_tokens=max_tokens,
+                    model=fallback_model,
+                    stop_sequences=stop_sequences,
+                    system_instruction=system_instruction,
+                    temperature=temperature,
                 )
+                return answer, fallback_model
         code = exc.status_code
         raise RuntimeError(f"Anthropic API error ({code}): {get_error_text(exc)}") from exc
