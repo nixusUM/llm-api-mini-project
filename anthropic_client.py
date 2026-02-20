@@ -43,6 +43,15 @@ def extract_text(message: object) -> str:
     return "No text in model response."
 
 
+def extract_usage(message: object) -> dict[str, int]:
+    usage = getattr(message, "usage", None)
+    if not usage:
+        return {"input_tokens": 0, "output_tokens": 0}
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    return {"input_tokens": input_tokens, "output_tokens": output_tokens}
+
+
 def build_request_kwargs(
     model: str,
     prompt: str,
@@ -73,7 +82,7 @@ def send_message(
     stop_sequences: list[str] | None = None,
     system_instruction: str | None = None,
     temperature: float | None = None,
-) -> str:
+) -> tuple[str, dict[str, int]]:
     request_kwargs = build_request_kwargs(
         model,
         prompt,
@@ -83,7 +92,9 @@ def send_message(
         temperature,
     )
     message = client.messages.create(**request_kwargs)
-    return extract_text(message)
+    text = extract_text(message)
+    usage = extract_usage(message)
+    return text, usage
 
 
 def list_model_ids(client: Anthropic) -> list[str]:
@@ -126,7 +137,7 @@ def ask_claude(
     temperature: float | None = None,
     model_override: str | None = None,
 ) -> str:
-    text, _ = ask_claude_with_meta(
+    text, _, _ = ask_claude_with_meta(
         prompt=prompt,
         max_tokens=max_tokens,
         stop_sequences=stop_sequences,
@@ -144,14 +155,14 @@ def ask_claude_with_meta(
     system_instruction: str | None = None,
     temperature: float | None = None,
     model_override: str | None = None,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict[str, int]]:
     client = Anthropic(api_key=get_api_key())
     env_model = get_model_override()
     requested_model = (model_override or "").strip()
     effective_override = requested_model or env_model
     selected_model = effective_override or PREFERRED_MODELS[0]
     try:
-        answer = send_message(
+        answer, usage = send_message(
             client=client,
             prompt=prompt,
             max_tokens=max_tokens,
@@ -160,12 +171,12 @@ def ask_claude_with_meta(
             system_instruction=system_instruction,
             temperature=temperature,
         )
-        return answer, selected_model
+        return answer, selected_model, usage
     except APIStatusError as exc:
         if is_model_not_found(exc):
             fallback_model = resolve_model(client, effective_override)
             if fallback_model != selected_model:
-                answer = send_message(
+                answer, usage = send_message(
                     client=client,
                     prompt=prompt,
                     max_tokens=max_tokens,
@@ -174,6 +185,6 @@ def ask_claude_with_meta(
                     system_instruction=system_instruction,
                     temperature=temperature,
                 )
-                return answer, fallback_model
+                return answer, fallback_model, usage
         code = exc.status_code
         raise RuntimeError(f"Anthropic API error ({code}): {get_error_text(exc)}") from exc

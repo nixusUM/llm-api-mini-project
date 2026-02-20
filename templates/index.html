@@ -60,43 +60,59 @@
 </head>
 <body>
   <h1>Claude API Mini Project</h1>
-  <div class="meta">Configured model: <strong>{{ selected_model or "auto" }}</strong></div>
+  <div class="meta">Day 5: Model Versions (weak / medium / strong)</div>
   <form method="post" id="prompt-form">
-    <label for="prompt">Prompt (same for both requests):</label>
+    <label for="prompt">Prompt (same prompt for all three models):</label>
     <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
 
     <div class="field">
-      <label for="selected_model">Model:</label>
-      <select id="selected_model" name="selected_model">
+      <label for="weak_model">Weak model:</label>
+      <select id="weak_model" name="weak_model">
         {% for model in model_options %}
-        <option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>
+        <option value="{{ model }}" {% if model == weak_model %}selected{% endif %}>{{ model }}</option>
         {% endfor %}
       </select>
     </div>
 
     <div class="field">
-      <label for="temp_0">Temperature A (recommended 0):</label>
-      <input id="temp_0" name="temp_0" value="{{ temp_0 }}">
+      <label for="medium_model">Medium model:</label>
+      <select id="medium_model" name="medium_model">
+        {% for model in model_options %}
+        <option value="{{ model }}" {% if model == medium_model %}selected{% endif %}>{{ model }}</option>
+        {% endfor %}
+      </select>
     </div>
 
     <div class="field">
-      <label for="temp_07">Temperature B (recommended 0.7):</label>
-      <input id="temp_07" name="temp_07" value="{{ temp_07 }}">
+      <label for="strong_model">Strong model:</label>
+      <select id="strong_model" name="strong_model">
+        {% for model in model_options %}
+        <option value="{{ model }}" {% if model == strong_model %}selected{% endif %}>{{ model }}</option>
+        {% endfor %}
+      </select>
     </div>
 
     <div class="field">
-      <label for="temp_12">Temperature C (recommended 1.0):</label>
-      <input id="temp_12" name="temp_12" value="{{ temp_12 }}">
+      <label for="temperature">Temperature (common for all 3 calls):</label>
+      <input id="temperature" name="temperature" value="{{ temperature }}">
     </div>
 
     <div class="field">
-      <label for="max_tokens_answer">Max tokens per temperature answer:</label>
-      <input id="max_tokens_answer" name="max_tokens_answer" value="{{ max_tokens_answer }}">
+      <label for="max_tokens">Max tokens per model answer:</label>
+      <input id="max_tokens" name="max_tokens" value="{{ max_tokens }}">
     </div>
 
     <div class="field">
       <label for="max_tokens_summary">Max tokens for comparison summary:</label>
       <input id="max_tokens_summary" name="max_tokens_summary" value="{{ max_tokens_summary }}">
+    </div>
+
+    <div class="field">
+      <label for="summary_language">Summary language:</label>
+      <select id="summary_language" name="summary_language">
+        <option value="ru" {% if summary_language == "ru" %}selected{% endif %}>RU</option>
+        <option value="en" {% if summary_language == "en" %}selected{% endif %}>EN</option>
+      </select>
     </div>
 
     <div class="actions">
@@ -110,28 +126,54 @@
     </div>
   </form>
 
-  {% if temperature_answer_0 %}
-  <h2 class="title">Temperature {{ temp_0 }}</h2>
-  <div class="meta">Model used: <strong>{{ used_model_0 }}</strong> | Requested temperature: <strong>{{ temp_0 }}</strong> | Sent temperature: <strong>{{ effective_temp_0 }}</strong></div>
-  <div class="card">{{ temperature_answer_0 }}</div>
+  {% if weak.text %}
+  <h2 class="title">Weak Model Result</h2>
+  <div class="meta">
+    Model: <strong>{{ weak.used_model }}</strong> |
+    Latency: <strong>{{ weak.latency_ms }} ms</strong> |
+    Input tokens: <strong>{{ weak.input_tokens }}</strong> |
+    Output tokens: <strong>{{ weak.output_tokens }}</strong> |
+    Total tokens: <strong>{{ weak.total_tokens }}</strong> |
+    Estimated cost: <strong>{{ weak.cost_text }}</strong>
+  </div>
+  <div class="card">{{ weak.text }}</div>
   {% endif %}
 
-  {% if temperature_answer_07 %}
-  <h2 class="title">Temperature {{ temp_07 }}</h2>
-  <div class="meta">Model used: <strong>{{ used_model_07 }}</strong> | Requested temperature: <strong>{{ temp_07 }}</strong> | Sent temperature: <strong>{{ effective_temp_07 }}</strong></div>
-  <div class="card">{{ temperature_answer_07 }}</div>
+  {% if medium.text %}
+  <h2 class="title">Medium Model Result</h2>
+  <div class="meta">
+    Model: <strong>{{ medium.used_model }}</strong> |
+    Latency: <strong>{{ medium.latency_ms }} ms</strong> |
+    Input tokens: <strong>{{ medium.input_tokens }}</strong> |
+    Output tokens: <strong>{{ medium.output_tokens }}</strong> |
+    Total tokens: <strong>{{ medium.total_tokens }}</strong> |
+    Estimated cost: <strong>{{ medium.cost_text }}</strong>
+  </div>
+  <div class="card">{{ medium.text }}</div>
   {% endif %}
 
-  {% if temperature_answer_12 %}
-  <h2 class="title">Temperature {{ temp_12 }}</h2>
-  <div class="meta">Model used: <strong>{{ used_model_12 }}</strong> | Requested temperature: <strong>{{ temp_12 }}</strong> | Sent temperature: <strong>{{ effective_temp_12 }}</strong></div>
-  <div class="card">{{ temperature_answer_12 }}</div>
+  {% if strong.text %}
+  <h2 class="title">Strong Model Result</h2>
+  <div class="meta">
+    Model: <strong>{{ strong.used_model }}</strong> |
+    Latency: <strong>{{ strong.latency_ms }} ms</strong> |
+    Input tokens: <strong>{{ strong.input_tokens }}</strong> |
+    Output tokens: <strong>{{ strong.output_tokens }}</strong> |
+    Total tokens: <strong>{{ strong.total_tokens }}</strong> |
+    Estimated cost: <strong>{{ strong.cost_text }}</strong>
+  </div>
+  <div class="card">{{ strong.text }}</div>
   {% endif %}
 
-  {% if comparison_summary %}
-  <h2 class="title">Temperature Comparison Summary</h2>
-  <div class="meta">Generated by model: <strong>{{ summary_model }}</strong></div>
-  <div class="card">{{ comparison_summary }}</div>
+  {% if summary %}
+  <h2 class="title">Model Comparison Summary</h2>
+  <div class="meta">Generated by: <strong>{{ summary_model }}</strong></div>
+  <div class="card">{{ summary }}</div>
+  <div class="meta">
+    Links:
+    <a href="https://docs.anthropic.com/en/docs/about-claude/models" target="_blank" rel="noopener noreferrer">Anthropic Models</a> |
+    <a href="https://docs.anthropic.com/en/docs/about-claude/pricing" target="_blank" rel="noopener noreferrer">Anthropic Pricing</a>
+  </div>
   {% endif %}
   <script>
     const form = document.getElementById("prompt-form");
