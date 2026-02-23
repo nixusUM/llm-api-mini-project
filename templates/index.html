@@ -24,6 +24,33 @@
       line-height: 1.45;
     }
     .title { margin-top: 20px; margin-bottom: 8px; }
+    .chat {
+      margin-top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .msg {
+      border-radius: 8px;
+      padding: 10px 12px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    .msg-user {
+      background: #e8f1ff;
+      border: 1px solid #cfe0ff;
+    }
+    .msg-assistant {
+      background: #f3f3f3;
+      border: 1px solid #e1e1e1;
+    }
+    .msg-role {
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
     .meta {
       margin-top: 8px;
       margin-bottom: 8px;
@@ -60,63 +87,33 @@
 </head>
 <body>
   <h1>Claude API Mini Project</h1>
-  <div class="meta">Day 5: Model Versions (weak / medium / strong)</div>
+  <div class="meta">Day 6: First Agent (single model request through LLMAgent)</div>
   <form method="post" id="prompt-form">
-    <label for="prompt">Prompt (same prompt for all three models):</label>
+    <label for="prompt">New chat message:</label>
     <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
 
     <div class="field">
-      <label for="weak_model">Weak model:</label>
-      <select id="weak_model" name="weak_model">
+      <label for="selected_model">Model:</label>
+      <select id="selected_model" name="selected_model">
         {% for model in model_options %}
-        <option value="{{ model }}" {% if model == weak_model %}selected{% endif %}>{{ model }}</option>
+        <option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>
         {% endfor %}
       </select>
     </div>
 
     <div class="field">
-      <label for="medium_model">Medium model:</label>
-      <select id="medium_model" name="medium_model">
-        {% for model in model_options %}
-        <option value="{{ model }}" {% if model == medium_model %}selected{% endif %}>{{ model }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="field">
-      <label for="strong_model">Strong model:</label>
-      <select id="strong_model" name="strong_model">
-        {% for model in model_options %}
-        <option value="{{ model }}" {% if model == strong_model %}selected{% endif %}>{{ model }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="field">
-      <label for="temperature">Temperature (common for all 3 calls):</label>
+      <label for="temperature">Temperature:</label>
       <input id="temperature" name="temperature" value="{{ temperature }}">
     </div>
 
     <div class="field">
-      <label for="max_tokens">Max tokens per model answer:</label>
+      <label for="max_tokens">Max tokens:</label>
       <input id="max_tokens" name="max_tokens" value="{{ max_tokens }}">
     </div>
 
-    <div class="field">
-      <label for="max_tokens_summary">Max tokens for comparison summary:</label>
-      <input id="max_tokens_summary" name="max_tokens_summary" value="{{ max_tokens_summary }}">
-    </div>
-
-    <div class="field">
-      <label for="summary_language">Summary language:</label>
-      <select id="summary_language" name="summary_language">
-        <option value="ru" {% if summary_language == "ru" %}selected{% endif %}>RU</option>
-        <option value="en" {% if summary_language == "en" %}selected{% endif %}>EN</option>
-      </select>
-    </div>
-
     <div class="actions">
-      <button type="submit" id="submit-btn">Send</button>
+      <button type="submit" id="submit-btn" name="action" value="send">Send message</button>
+      <button type="submit" name="action" value="clear">Clear context</button>
     </div>
     <div class="loading" id="loading-indicator" aria-live="polite">
       <div class="loading-text">Waiting for API response...</div>
@@ -126,53 +123,36 @@
     </div>
   </form>
 
-  {% if weak.text %}
-  <h2 class="title">Weak Model Result</h2>
-  <div class="meta">
-    Model: <strong>{{ weak.used_model }}</strong> |
-    Latency: <strong>{{ weak.latency_ms }} ms</strong> |
-    Input tokens: <strong>{{ weak.input_tokens }}</strong> |
-    Output tokens: <strong>{{ weak.output_tokens }}</strong> |
-    Total tokens: <strong>{{ weak.total_tokens }}</strong> |
-    Estimated cost: <strong>{{ weak.cost_text }}</strong>
+  <h2 class="title">Agent Pipeline</h2>
+  <div class="card">
+    1) User writes a prompt in the web form
+    2) Web route calls <strong>LLMAgent.run_chat()</strong>
+    3) Agent sends request to LLM API
+    4) Agent receives answer and metrics
+    5) Web renders final result
   </div>
-  <div class="card">{{ weak.text }}</div>
+
+  {% if history %}
+  <h2 class="title">Chat Context</h2>
+  <div class="chat">
+    {% for item in history %}
+    <div class="msg {% if item.role == 'user' %}msg-user{% else %}msg-assistant{% endif %}">
+      <div class="msg-role">{% if item.role == "user" %}User{% else %}Assistant{% endif %}</div>
+      {{ item.content }}
+    </div>
+    {% endfor %}
+  </div>
   {% endif %}
 
-  {% if medium.text %}
-  <h2 class="title">Medium Model Result</h2>
+  {% if result.text %}
+  <h2 class="title">Last Agent Response Metrics</h2>
   <div class="meta">
-    Model: <strong>{{ medium.used_model }}</strong> |
-    Latency: <strong>{{ medium.latency_ms }} ms</strong> |
-    Input tokens: <strong>{{ medium.input_tokens }}</strong> |
-    Output tokens: <strong>{{ medium.output_tokens }}</strong> |
-    Total tokens: <strong>{{ medium.total_tokens }}</strong> |
-    Estimated cost: <strong>{{ medium.cost_text }}</strong>
-  </div>
-  <div class="card">{{ medium.text }}</div>
-  {% endif %}
-
-  {% if strong.text %}
-  <h2 class="title">Strong Model Result</h2>
-  <div class="meta">
-    Model: <strong>{{ strong.used_model }}</strong> |
-    Latency: <strong>{{ strong.latency_ms }} ms</strong> |
-    Input tokens: <strong>{{ strong.input_tokens }}</strong> |
-    Output tokens: <strong>{{ strong.output_tokens }}</strong> |
-    Total tokens: <strong>{{ strong.total_tokens }}</strong> |
-    Estimated cost: <strong>{{ strong.cost_text }}</strong>
-  </div>
-  <div class="card">{{ strong.text }}</div>
-  {% endif %}
-
-  {% if summary %}
-  <h2 class="title">Model Comparison Summary</h2>
-  <div class="meta">Generated by: <strong>{{ summary_model }}</strong></div>
-  <div class="card">{{ summary }}</div>
-  <div class="meta">
-    Links:
-    <a href="https://docs.anthropic.com/en/docs/about-claude/models" target="_blank" rel="noopener noreferrer">Anthropic Models</a> |
-    <a href="https://docs.anthropic.com/en/docs/about-claude/pricing" target="_blank" rel="noopener noreferrer">Anthropic Pricing</a>
+    Model: <strong>{{ result.used_model }}</strong> |
+    Latency: <strong>{{ result.latency_ms }} ms</strong> |
+    Input tokens: <strong>{{ result.input_tokens }}</strong> |
+    Output tokens: <strong>{{ result.output_tokens }}</strong> |
+    Total tokens: <strong>{{ result.total_tokens }}</strong> |
+    Estimated cost: <strong>{{ result.cost_text }}</strong>
   </div>
   {% endif %}
   <script>
@@ -180,7 +160,11 @@
     const loading = document.getElementById("loading-indicator");
     const button = document.getElementById("submit-btn");
 
-    form.addEventListener("submit", () => {
+    form.addEventListener("submit", (event) => {
+      const action = event.submitter ? event.submitter.value : "send";
+      if (action !== "send") {
+        return;
+      }
       loading.style.display = "block";
       button.disabled = true;
       button.textContent = "Sending...";
