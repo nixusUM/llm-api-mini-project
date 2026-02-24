@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -16,6 +18,48 @@ class AgentResponse:
 
 
 class LLMAgent:
+    def __init__(self, history_path: str = "data/chat_history.json") -> None:
+        self.history_path = Path(history_path)
+        self.history_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def load_history(self) -> list[dict[str, str]]:
+        if not self.history_path.exists():
+            return []
+        try:
+            raw = self.history_path.read_text(encoding="utf-8")
+            parsed = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        history: list[dict[str, str]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role", "")).strip().lower()
+            content = str(item.get("content", "")).strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            history.append({"role": role, "content": content})
+        return history
+
+    def clear_history(self) -> None:
+        self._save_history([])
+
+    def run_chat_persistent(
+        self,
+        user_message: str,
+        model_id: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> AgentResponse:
+        history = self.load_history()
+        response = self.run_chat(history, user_message, model_id, temperature, max_tokens)
+        history.append({"role": "user", "content": user_message.strip()})
+        history.append({"role": "assistant", "content": response.text})
+        self._save_history(history[-40:])
+        return response
+
     def run_chat(
         self,
         history: list[dict[str, str]],
@@ -64,8 +108,9 @@ class LLMAgent:
 
     def _from_error(self, error_text: str, model: str, started: float) -> AgentResponse:
         latency_ms = int((perf_counter() - started) * 1000)
+        friendly_error = self._friendly_error_text(error_text)
         return AgentResponse(
-            text=f"Error: {error_text}",
+            text=f"Error: {friendly_error}",
             used_model=model,
             input_tokens=0,
             output_tokens=0,
@@ -98,6 +143,12 @@ class LLMAgent:
             return "N/A"
         return f"${cost:.6f}"
 
+    def _friendly_error_text(self, error_text: str) -> str:
+        normalized = error_text.lower()
+        if "overloaded" in normalized or "(529)" in normalized:
+            return "LLM provider is temporarily overloaded (529). Please retry in a few seconds."
+        return error_text
+
     def _build_chat_prompt(self, history: list[dict[str, str]], user_message: str) -> str:
         lines = [
             "You are a helpful assistant in a multi-turn chat.",
@@ -116,3 +167,7 @@ class LLMAgent:
         lines.append(f"User: {user_message.strip()}")
         lines.append("Assistant:")
         return "\n".join(lines)
+
+    def _save_history(self, history: list[dict[str, str]]) -> None:
+        payload = json.dumps(history, ensure_ascii=False, indent=2)
+        self.history_path.write_text(payload, encoding="utf-8")

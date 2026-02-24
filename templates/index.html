@@ -3,167 +3,337 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LLM API Demo</title>
+  <title>LLM Agent Chat</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 980px; margin: 24px auto; padding: 0 16px; }
-    textarea { width: 100%; min-height: 120px; }
-    input { width: 100%; padding: 8px; box-sizing: border-box; }
-    select { width: 100%; padding: 8px; box-sizing: border-box; }
-    button { margin-top: 12px; padding: 8px 12px; }
-    .field { margin-top: 12px; }
-    .actions { margin-top: 12px; }
-    .card {
-      background: #f3f3f3;
-      border-radius: 8px;
-      padding: 12px;
-      margin-top: 16px;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      word-break: break-word;
-      overflow-x: auto;
-      line-height: 1.45;
+    :root {
+      --bg: #0b1220;
+      --panel: #121a2b;
+      --panel-soft: #1a2338;
+      --text: #e9eefc;
+      --muted: #9da9c7;
+      --accent: #6ea8fe;
+      --accent-2: #8b5cf6;
+      --border: #25324d;
     }
-    .title { margin-top: 20px; margin-bottom: 8px; }
-    .chat {
-      margin-top: 16px;
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Arial, sans-serif;
+      color: var(--text);
+      background: radial-gradient(1100px 700px at 0% -10%, #1f2b48 0%, var(--bg) 55%);
+    }
+    .container {
+      max-width: 1320px;
+      margin: 18px auto 26px;
+      padding: 0 16px;
+      height: calc(100vh - 44px);
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: linear-gradient(145deg, #141e33, #10172a);
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .header h1 { margin: 0; font-size: 18px; }
+    .header .sub { color: var(--muted); font-size: 13px; }
+    .layout {
+      display: grid;
+      grid-template-columns: 290px minmax(0, 1fr) 300px;
+      gap: 12px;
+      align-items: start;
+      min-height: 0;
+      flex: 1;
+    }
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 12px;
+    }
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: sticky;
+      top: 10px;
+    }
+    label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 13px; }
+    textarea, input, select {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0f1728;
+      color: var(--text);
+      padding: 10px 12px;
+      outline: none;
+    }
+    textarea { resize: none; }
+    .field { margin-bottom: 10px; }
+    .actions { display: flex; gap: 8px; }
+    button {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 13px;
+      color: var(--text);
+      background: #111a2c;
+      cursor: pointer;
+    }
+    .btn-primary {
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      border: none;
+      color: white;
+      font-weight: 600;
+    }
+    .btn-soft { background: #111a2c; }
+    .btn-block { width: 100%; }
+    .loading {
+      display: none;
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: #0f1728;
+      color: var(--muted);
+    }
+    .progress {
+      margin-top: 8px;
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      background: #1d2943;
+      overflow: hidden;
+    }
+    .bar {
+      width: 35%;
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      animation: move 1.1s infinite ease-in-out;
+    }
+    @keyframes move {
+      from { transform: translateX(-140%); }
+      to { transform: translateX(340%); }
+    }
+    .title { margin: 2px 0 8px; font-size: 16px; }
+    .meta { color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .hint {
+      border: 1px dashed #365082;
+      background: #101a2d;
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: #b5c3e7;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+    .chat-shell {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      height: 72vh;
+      max-height: 72vh;
+      gap: 10px;
+    }
+    .chat-window {
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 6px 6px 0 2px;
+      scroll-behavior: smooth;
       display: flex;
       flex-direction: column;
       gap: 10px;
     }
     .msg {
-      border-radius: 8px;
+      border-radius: 12px;
       padding: 10px 12px;
       white-space: pre-wrap;
       line-height: 1.45;
+      border: 1px solid var(--border);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      overflow: visible;
+      max-height: none;
+      height: auto;
     }
-    .msg-user {
-      background: #e8f1ff;
-      border: 1px solid #cfe0ff;
+    .msg * {
+      overflow: visible !important;
+      max-height: none !important;
     }
-    .msg-assistant {
-      background: #f3f3f3;
-      border: 1px solid #e1e1e1;
-    }
+    .msg-user { background: #0f1f3c; margin-left: 70px; }
+    .msg-assistant { background: var(--panel-soft); margin-right: 70px; }
     .msg-role {
-      font-size: 12px;
-      color: #555;
-      margin-bottom: 4px;
+      font-size: 11px;
+      color: var(--muted);
       text-transform: uppercase;
-      letter-spacing: 0.04em;
+      letter-spacing: .05em;
+      margin-bottom: 5px;
     }
-    .meta {
+    .stats { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .stats strong { color: var(--text); }
+    .composer textarea {
+      min-height: 84px;
+      max-height: 170px;
+      resize: vertical;
+    }
+    .composer-actions {
       margin-top: 8px;
-      margin-bottom: 8px;
-      font-size: 14px;
-      color: #444;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
     }
-    .loading {
-      display: none;
-      margin-top: 12px;
-      background: #f3f3f3;
-      border-radius: 8px;
-      padding: 10px 12px;
+    .empty {
+      color: var(--muted);
+      text-align: center;
+      padding: 20px 12px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
     }
-    .loading-text { margin-bottom: 8px; font-size: 14px; }
-    .progress-track {
-      width: 100%;
-      height: 10px;
-      border-radius: 999px;
-      background: #ddd;
-      overflow: hidden;
-    }
-    .progress-bar {
-      width: 35%;
-      height: 100%;
-      border-radius: 999px;
-      background: linear-gradient(90deg, #4f46e5, #3b82f6);
-      animation: indeterminate 1.1s infinite ease-in-out;
-    }
-    @keyframes indeterminate {
-      from { transform: translateX(-140%); }
-      to { transform: translateX(340%); }
+    @media (max-width: 1100px) {
+      .container {
+        height: auto;
+      }
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .stack { position: static; }
+      .chat-shell {
+        height: 62vh;
+        max-height: 62vh;
+      }
     }
   </style>
 </head>
 <body>
-  <h1>Claude API Mini Project</h1>
-  <div class="meta">Day 6: First Agent (single model request through LLMAgent)</div>
-  <form method="post" id="prompt-form">
-    <label for="prompt">New chat message:</label>
-    <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
-
-    <div class="field">
-      <label for="selected_model">Model:</label>
-      <select id="selected_model" name="selected_model">
-        {% for model in model_options %}
-        <option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>
-        {% endfor %}
-      </select>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>Day 7 - Persistent Agent Context Chat</h1>
+        <div class="sub">LLMAgent saves history in JSON and restores it after restart.</div>
+      </div>
+      <div class="sub">Storage: <strong>{{ history_path }}</strong> | Messages: <strong>{{ history|length }}</strong></div>
     </div>
 
-    <div class="field">
-      <label for="temperature">Temperature:</label>
-      <input id="temperature" name="temperature" value="{{ temperature }}">
-    </div>
+    <form method="post" id="prompt-form" class="layout">
+      <aside class="stack">
+        <div class="panel">
+          <h2 class="title">Model Settings</h2>
+          <div class="field">
+            <label for="selected_model">Model</label>
+            <select id="selected_model" name="selected_model">
+              {% for model in model_options %}
+              <option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="temperature">Temperature</label>
+            <input id="temperature" name="temperature" value="{{ temperature }}">
+          </div>
+          <div class="field">
+            <label for="max_tokens">Max tokens</label>
+            <input id="max_tokens" name="max_tokens" value="{{ max_tokens }}">
+          </div>
+          <div class="actions">
+            <button type="submit" class="btn-soft btn-block" name="action" value="clear" formnovalidate>Clear saved context</button>
+          </div>
+          <div class="actions" style="margin-top: 8px;">
+            <button type="submit" class="btn-soft btn-block" name="action" value="clear_all" formnovalidate>Clear all history</button>
+          </div>
+        </div>
 
-    <div class="field">
-      <label for="max_tokens">Max tokens:</label>
-      <input id="max_tokens" name="max_tokens" value="{{ max_tokens }}">
-    </div>
+        {% if result.text %}
+        <div class="panel">
+          <h2 class="title">Last Metrics</h2>
+          <div class="stats">
+            Model: <strong>{{ result.used_model }}</strong><br>
+            Latency: <strong>{{ result.latency_ms }} ms</strong><br>
+            Input tokens: <strong>{{ result.input_tokens }}</strong><br>
+            Output tokens: <strong>{{ result.output_tokens }}</strong><br>
+            Total tokens: <strong>{{ result.total_tokens }}</strong><br>
+            Estimated cost: <strong>{{ result.cost_text }}</strong>
+          </div>
+        </div>
+        {% endif %}
+      </aside>
 
-    <div class="actions">
-      <button type="submit" id="submit-btn" name="action" value="send">Send message</button>
-      <button type="submit" name="action" value="clear">Clear context</button>
-    </div>
-    <div class="loading" id="loading-indicator" aria-live="polite">
-      <div class="loading-text">Waiting for API response...</div>
-      <div class="progress-track">
-        <div class="progress-bar"></div>
+      <main class="panel chat-shell">
+        <div class="chat-window" id="chat-window">
+          {% if history %}
+            {% for item in history %}
+            <div class="msg {% if item.role == 'user' %}msg-user{% else %}msg-assistant{% endif %}">
+              <div class="msg-role">{% if item.role == "user" %}User{% else %}Assistant{% endif %}</div>
+              {{ item.content }}
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="empty">No messages yet. Start the chat from the input below.</div>
+          {% endif %}
+        </div>
+
+        <div class="composer">
+          <label for="prompt">Message</label>
+          <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
+          <div class="composer-actions">
+            <button class="btn-primary" type="submit" id="submit-btn" name="action" value="send">Send message</button>
+          </div>
+          <div class="loading" id="loading-indicator" aria-live="polite">
+            Agent is calling LLM API...
+            <div class="progress"><div class="bar"></div></div>
+          </div>
+        </div>
+      </main>
+
+      <aside class="stack">
+        <div class="panel">
+          <h2 class="title">How to Verify</h2>
+          <div class="hint">
+            1) Send 2-3 messages.<br>
+            2) Restart `python3 web.py`.<br>
+            3) Continue the dialog.<br>
+            4) Assistant should remember old details.
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Demo Prompts</h2>
+          <div class="hint">
+            1) "Запомни: проект LinguaSprint, KPI 1500 MAU."<br>
+            2) "Теперь предложи риски для этого KPI."<br>
+            3) После перезапуска: "Продолжи план с учетом прошлого контекста."
+          </div>
+        </div>
+      </aside>
+    </form>
+
+    <div class="panel">
+      <h2 class="title">Agent Pipeline</h2>
+      <div class="hint">
+        User message -> <strong>LLMAgent.run_chat_persistent()</strong> -> LLM API -> save JSON history -> render chat UI.
       </div>
     </div>
-  </form>
-
-  <h2 class="title">Agent Pipeline</h2>
-  <div class="card">
-    1) User writes a prompt in the web form
-    2) Web route calls <strong>LLMAgent.run_chat()</strong>
-    3) Agent sends request to LLM API
-    4) Agent receives answer and metrics
-    5) Web renders final result
   </div>
 
-  {% if history %}
-  <h2 class="title">Chat Context</h2>
-  <div class="chat">
-    {% for item in history %}
-    <div class="msg {% if item.role == 'user' %}msg-user{% else %}msg-assistant{% endif %}">
-      <div class="msg-role">{% if item.role == "user" %}User{% else %}Assistant{% endif %}</div>
-      {{ item.content }}
-    </div>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  {% if result.text %}
-  <h2 class="title">Last Agent Response Metrics</h2>
-  <div class="meta">
-    Model: <strong>{{ result.used_model }}</strong> |
-    Latency: <strong>{{ result.latency_ms }} ms</strong> |
-    Input tokens: <strong>{{ result.input_tokens }}</strong> |
-    Output tokens: <strong>{{ result.output_tokens }}</strong> |
-    Total tokens: <strong>{{ result.total_tokens }}</strong> |
-    Estimated cost: <strong>{{ result.cost_text }}</strong>
-  </div>
-  {% endif %}
   <script>
     const form = document.getElementById("prompt-form");
     const loading = document.getElementById("loading-indicator");
     const button = document.getElementById("submit-btn");
+    const chatWindow = document.getElementById("chat-window");
+
+    if (chatWindow) {
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
 
     form.addEventListener("submit", (event) => {
       const action = event.submitter ? event.submitter.value : "send";
-      if (action !== "send") {
-        return;
+      if (action !== "send") return;
+      if (chatWindow) {
+        chatWindow.scrollTop = chatWindow.scrollHeight;
       }
       loading.style.display = "block";
       button.disabled = true;

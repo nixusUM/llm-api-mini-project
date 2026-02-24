@@ -1,4 +1,5 @@
 import os
+from time import sleep
 from anthropic import Anthropic
 from anthropic import APIStatusError
 
@@ -129,6 +130,41 @@ def is_model_not_found(exc: APIStatusError) -> bool:
     return exc.status_code == 404 and "model" in text
 
 
+def is_overloaded_error(exc: APIStatusError) -> bool:
+    text = get_error_text(exc).lower()
+    return exc.status_code == 529 or "overloaded" in text
+
+
+def send_with_retry(
+    client: Anthropic,
+    prompt: str,
+    max_tokens: int,
+    model: str,
+    stop_sequences: list[str] | None,
+    system_instruction: str | None,
+    temperature: float | None,
+    attempts: int = 3,
+) -> tuple[str, dict[str, int]]:
+    last_exc: APIStatusError | None = None
+    for attempt in range(attempts):
+        try:
+            return send_message(
+                client=client,
+                prompt=prompt,
+                max_tokens=max_tokens,
+                model=model,
+                stop_sequences=stop_sequences,
+                system_instruction=system_instruction,
+                temperature=temperature,
+            )
+        except APIStatusError as exc:
+            last_exc = exc
+            if not is_overloaded_error(exc) or attempt == attempts - 1:
+                raise
+            sleep(0.8 * (attempt + 1))
+    raise last_exc if last_exc else RuntimeError("Unknown retry error")
+
+
 def ask_claude(
     prompt: str,
     max_tokens: int = 900,
@@ -162,28 +198,28 @@ def ask_claude_with_meta(
     effective_override = requested_model or env_model
     selected_model = effective_override or PREFERRED_MODELS[0]
     try:
-        answer, usage = send_message(
-            client=client,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            model=selected_model,
-            stop_sequences=stop_sequences,
-            system_instruction=system_instruction,
-            temperature=temperature,
+        answer, usage = send_with_retry(
+            client,
+            prompt,
+            max_tokens,
+            selected_model,
+            stop_sequences,
+            system_instruction,
+            temperature,
         )
         return answer, selected_model, usage
     except APIStatusError as exc:
         if is_model_not_found(exc):
             fallback_model = resolve_model(client, effective_override)
             if fallback_model != selected_model:
-                answer, usage = send_message(
-                    client=client,
-                    prompt=prompt,
-                    max_tokens=max_tokens,
-                    model=fallback_model,
-                    stop_sequences=stop_sequences,
-                    system_instruction=system_instruction,
-                    temperature=temperature,
+                answer, usage = send_with_retry(
+                    client,
+                    prompt,
+                    max_tokens,
+                    fallback_model,
+                    stop_sequences,
+                    system_instruction,
+                    temperature,
                 )
                 return answer, fallback_model, usage
         code = exc.status_code
