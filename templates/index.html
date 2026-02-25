@@ -176,6 +176,34 @@
     }
     .stats { color: var(--muted); font-size: 13px; line-height: 1.55; }
     .stats strong { color: var(--text); }
+    .warn {
+      border: 1px solid #8a3746;
+      background: #2a1420;
+      color: #ffced6;
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .growth {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .growth th,
+    .growth td {
+      border-bottom: 1px solid var(--border);
+      padding: 6px 4px;
+      text-align: right;
+    }
+    .growth th:first-child,
+    .growth td:first-child {
+      text-align: left;
+    }
+    .overflow-cell { color: #ffced6; }
     .composer textarea {
       min-height: 84px;
       max-height: 170px;
@@ -239,6 +267,10 @@
             <label for="max_tokens">Max tokens</label>
             <input id="max_tokens" name="max_tokens" value="{{ max_tokens }}">
           </div>
+          <div class="field">
+            <label for="context_limit">Context limit tokens (demo)</label>
+            <input id="context_limit" name="context_limit" value="{{ context_limit }}">
+          </div>
           <div class="actions">
             <button type="submit" class="btn-soft btn-block" name="action" value="clear" formnovalidate>Clear saved context</button>
           </div>
@@ -256,8 +288,14 @@
             Input tokens: <strong>{{ result.input_tokens }}</strong><br>
             Output tokens: <strong>{{ result.output_tokens }}</strong><br>
             Total tokens: <strong>{{ result.total_tokens }}</strong><br>
-            Estimated cost: <strong>{{ result.cost_text }}</strong>
+            Estimated cost: <strong>{{ result.cost_text }}</strong><br>
+            Current request tokens: <strong>{{ result.current_request_tokens }}</strong><br>
+            History tokens: <strong>{{ result.history_tokens }}</strong><br>
+            Context estimate: <strong>{{ result.context_tokens_estimate }}</strong> / <strong>{{ result.context_limit_tokens }}</strong>
           </div>
+          {% if result.overflowed %}
+          <div class="warn">Context limit exceeded. This simulates overflow behavior for Day 8 tests.</div>
+          {% endif %}
         </div>
         {% endif %}
       </aside>
@@ -293,20 +331,50 @@
         <div class="panel">
           <h2 class="title">How to Verify</h2>
           <div class="hint">
-            1) Send 2-3 messages.<br>
-            2) Restart `python3 web.py`.<br>
-            3) Continue the dialog.<br>
-            4) Assistant should remember old details.
+            1) Start a short dialog (1-2 messages) and note token metrics.<br>
+            2) Continue with 8-10 turns and watch `history_tokens` + `Token Growth` table.<br>
+            3) Set `Context limit tokens` to a small value (e.g. 800).<br>
+            4) Send a long request and confirm overflow warning appears.<br>
+            5) Compare token/cost growth between short and long sessions.
           </div>
         </div>
 
         <div class="panel">
           <h2 class="title">Demo Prompts</h2>
           <div class="hint">
-            1) "Запомни: проект LinguaSprint, KPI 1500 MAU."<br>
-            2) "Теперь предложи риски для этого KPI."<br>
-            3) После перезапуска: "Продолжи план с учетом прошлого контекста."
+            1) "Запомни: проект LinguaSprint, KPI 1500 MAU. Дай 3 риска."<br>
+            2) "Теперь для этих рисков предложи 5 конкретных мер."<br>
+            3) "Сделай подробный план из 30 пунктов с пояснениями по каждому."<br>
+            4) Для overflow: уменьшите `Context limit tokens` и повторите шаг 3.
           </div>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Token Growth</h2>
+          <table class="growth">
+            <thead>
+              <tr>
+                <th>Turn</th>
+                <th>Req</th>
+                <th>Hist</th>
+                <th>Resp</th>
+                <th>Sum</th>
+                <th>Cum</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in token_growth %}
+              <tr>
+                <td>#{{ row.turn }}</td>
+                <td>{{ row.current_request_tokens }}</td>
+                <td>{{ row.history_tokens }}</td>
+                <td>{{ row.response_tokens }}</td>
+                <td class="{% if row.overflowed %}overflow-cell{% endif %}">{{ row.total_turn_tokens }}</td>
+                <td>{{ row.cumulative_tokens }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
       </aside>
     </form>

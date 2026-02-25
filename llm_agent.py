@@ -15,6 +15,11 @@ class AgentResponse:
     total_tokens: int
     latency_ms: int
     cost_text: str
+    current_request_tokens: int
+    history_tokens: int
+    context_tokens_estimate: int
+    context_limit_tokens: int
+    overflowed: bool
 
 
 class LLMAgent:
@@ -22,7 +27,7 @@ class LLMAgent:
         self.history_path = Path(history_path)
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def load_history(self) -> list[dict[str, str]]:
+    def load_history(self) -> list[dict]:
         if not self.history_path.exists():
             return []
         try:
@@ -32,7 +37,7 @@ class LLMAgent:
             return []
         if not isinstance(parsed, list):
             return []
-        history: list[dict[str, str]] = []
+        history: list[dict] = []
         for item in parsed:
             if not isinstance(item, dict):
                 continue
@@ -40,7 +45,11 @@ class LLMAgent:
             content = str(item.get("content", "")).strip()
             if role not in {"user", "assistant"} or not content:
                 continue
-            history.append({"role": role, "content": content})
+            normalized = {"role": role, "content": content}
+            meta = item.get("meta")
+            if isinstance(meta, dict):
+                normalized["meta"] = meta
+            history.append(normalized)
         return history
 
     def clear_history(self) -> None:
@@ -52,11 +61,32 @@ class LLMAgent:
         model_id: str,
         temperature: float,
         max_tokens: int,
+        context_limit_override: int | None = None,
     ) -> AgentResponse:
         history = self.load_history()
-        response = self.run_chat(history, user_message, model_id, temperature, max_tokens)
+        response = self.run_chat(
+            history,
+            user_message,
+            model_id,
+            temperature,
+            max_tokens,
+            context_limit_override,
+        )
         history.append({"role": "user", "content": user_message.strip()})
-        history.append({"role": "assistant", "content": response.text})
+        history.append(
+            {
+                "role": "assistant",
+                "content": response.text,
+                "meta": {
+                    "current_request_tokens": response.current_request_tokens,
+                    "history_tokens": response.history_tokens,
+                    "context_tokens_estimate": response.context_tokens_estimate,
+                    "context_limit_tokens": response.context_limit_tokens,
+                    "response_tokens": response.output_tokens,
+                    "overflowed": response.overflowed,
+                },
+            }
+        )
         self._save_history(history[-40:])
         return response
 
@@ -67,9 +97,25 @@ class LLMAgent:
         model_id: str,
         temperature: float,
         max_tokens: int,
+        context_limit_override: int | None = None,
     ) -> AgentResponse:
+        current_request_tokens = self._estimate_tokens(user_message)
+        history_tokens = self._estimate_history_tokens(history)
+        context_tokens = current_request_tokens + history_tokens
+        context_limit = context_limit_override or self._infer_context_limit_tokens(model_id)
+        if context_tokens + max_tokens > context_limit:
+            return self._from_overflow(model_id, current_request_tokens, history_tokens, context_tokens, context_limit)
         prompt = self._build_chat_prompt(history, user_message)
-        return self.run(prompt, model_id, temperature, max_tokens)
+        return self.run(
+            prompt=prompt,
+            model_id=model_id,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            current_request_tokens=current_request_tokens,
+            history_tokens=history_tokens,
+            context_tokens=context_tokens,
+            context_limit=context_limit,
+        )
 
     def run(
         self,
@@ -77,6 +123,10 @@ class LLMAgent:
         model_id: str,
         temperature: float,
         max_tokens: int,
+        current_request_tokens: int = 0,
+        history_tokens: int = 0,
+        context_tokens: int = 0,
+        context_limit: int = 0,
     ) -> AgentResponse:
         started = perf_counter()
         try:
@@ -86,11 +136,38 @@ class LLMAgent:
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            return self._from_success(text, used_model, usage, started)
+            return self._from_success(
+                text,
+                used_model,
+                usage,
+                started,
+                current_request_tokens,
+                history_tokens,
+                context_tokens,
+                context_limit,
+            )
         except Exception as exc:
-            return self._from_error(str(exc), model_id, started)
+            return self._from_error(
+                str(exc),
+                model_id,
+                started,
+                current_request_tokens,
+                history_tokens,
+                context_tokens,
+                context_limit,
+            )
 
-    def _from_success(self, text: str, model: str, usage: dict, started: float) -> AgentResponse:
+    def _from_success(
+        self,
+        text: str,
+        model: str,
+        usage: dict,
+        started: float,
+        current_request_tokens: int,
+        history_tokens: int,
+        context_tokens: int,
+        context_limit: int,
+    ) -> AgentResponse:
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
         total_tokens = input_tokens + output_tokens
@@ -104,9 +181,23 @@ class LLMAgent:
             total_tokens=total_tokens,
             latency_ms=latency_ms,
             cost_text=self._format_cost(cost),
+            current_request_tokens=current_request_tokens,
+            history_tokens=history_tokens,
+            context_tokens_estimate=context_tokens,
+            context_limit_tokens=context_limit,
+            overflowed=False,
         )
 
-    def _from_error(self, error_text: str, model: str, started: float) -> AgentResponse:
+    def _from_error(
+        self,
+        error_text: str,
+        model: str,
+        started: float,
+        current_request_tokens: int,
+        history_tokens: int,
+        context_tokens: int,
+        context_limit: int,
+    ) -> AgentResponse:
         latency_ms = int((perf_counter() - started) * 1000)
         friendly_error = self._friendly_error_text(error_text)
         return AgentResponse(
@@ -117,6 +208,11 @@ class LLMAgent:
             total_tokens=0,
             latency_ms=latency_ms,
             cost_text="N/A",
+            current_request_tokens=current_request_tokens,
+            history_tokens=history_tokens,
+            context_tokens_estimate=context_tokens,
+            context_limit_tokens=context_limit,
+            overflowed=False,
         )
 
     def _estimate_cost(self, model_id: str, input_tokens: int, output_tokens: int) -> float | None:
@@ -167,6 +263,53 @@ class LLMAgent:
         lines.append(f"User: {user_message.strip()}")
         lines.append("Assistant:")
         return "\n".join(lines)
+
+    def _estimate_tokens(self, text: str) -> int:
+        cleaned = text.strip()
+        if not cleaned:
+            return 0
+        return max(1, (len(cleaned) // 4) + 1)
+
+    def _estimate_history_tokens(self, history: list[dict]) -> int:
+        total = 0
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            total += self._estimate_tokens(str(item.get("content", "")))
+            total += 4
+        return total
+
+    def _infer_context_limit_tokens(self, model_id: str) -> int:
+        model = model_id.lower()
+        if "haiku" in model or "sonnet" in model or "opus" in model:
+            return 200_000
+        return 100_000
+
+    def _from_overflow(
+        self,
+        model: str,
+        current_request_tokens: int,
+        history_tokens: int,
+        context_tokens: int,
+        context_limit: int,
+    ) -> AgentResponse:
+        return AgentResponse(
+            text=(
+                "Error: estimated context exceeds model limit. "
+                "Clear history or shorten messages before retrying."
+            ),
+            used_model=model,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            latency_ms=0,
+            cost_text="N/A",
+            current_request_tokens=current_request_tokens,
+            history_tokens=history_tokens,
+            context_tokens_estimate=context_tokens,
+            context_limit_tokens=context_limit,
+            overflowed=True,
+        )
 
     def _save_history(self, history: list[dict[str, str]]) -> None:
         payload = json.dumps(history, ensure_ascii=False, indent=2)
