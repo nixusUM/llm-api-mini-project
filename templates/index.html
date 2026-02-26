@@ -26,9 +26,6 @@
       max-width: 1320px;
       margin: 18px auto 26px;
       padding: 0 16px;
-      height: calc(100vh - 44px);
-      display: flex;
-      flex-direction: column;
     }
     .header {
       border: 1px solid var(--border);
@@ -48,8 +45,6 @@
       grid-template-columns: 290px minmax(0, 1fr) 300px;
       gap: 12px;
       align-items: start;
-      min-height: 0;
-      flex: 1;
     }
     .panel {
       border: 1px solid var(--border);
@@ -61,8 +56,7 @@
       display: flex;
       flex-direction: column;
       gap: 12px;
-      position: sticky;
-      top: 10px;
+      position: static;
     }
     label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 13px; }
     textarea, input, select {
@@ -90,36 +84,30 @@
       border: none;
       color: white;
       font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
     .btn-soft { background: #111a2c; }
     .btn-block { width: 100%; }
-    .loading {
+    .btn-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      border-top-color: #ffffff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
       display: none;
-      margin-top: 10px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
-      background: #0f1728;
-      color: var(--muted);
     }
-    .progress {
-      margin-top: 8px;
-      width: 100%;
-      height: 8px;
-      border-radius: 999px;
-      background: #1d2943;
-      overflow: hidden;
+    .btn-primary.loading .btn-spinner {
+      display: inline-block;
     }
-    .bar {
-      width: 35%;
-      height: 100%;
-      border-radius: 999px;
-      background: linear-gradient(90deg, var(--accent), var(--accent-2));
-      animation: move 1.1s infinite ease-in-out;
+    .btn-primary.loading .btn-label {
+      opacity: 0.9;
     }
-    @keyframes move {
-      from { transform: translateX(-140%); }
-      to { transform: translateX(340%); }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
     .title { margin: 2px 0 8px; font-size: 16px; }
     .meta { color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -192,6 +180,7 @@
       font-size: 12px;
       color: var(--muted);
       margin-top: 4px;
+      min-width: 420px;
     }
     .growth th,
     .growth td {
@@ -204,6 +193,21 @@
       text-align: left;
     }
     .overflow-cell { color: #ffced6; }
+    .checkbox-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+    .checkbox-inline input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+    }
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
     .composer textarea {
       min-height: 84px;
       max-height: 170px;
@@ -215,6 +219,23 @@
       justify-content: flex-end;
       gap: 8px;
     }
+    .ab-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .ab-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #0f1728;
+      padding: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    .ab-card strong { color: var(--text); }
     .empty {
       color: var(--muted);
       text-align: center;
@@ -223,9 +244,6 @@
       border-radius: 10px;
     }
     @media (max-width: 1100px) {
-      .container {
-        height: auto;
-      }
       .layout {
         grid-template-columns: 1fr;
       }
@@ -241,8 +259,8 @@
   <div class="container">
     <div class="header">
       <div>
-        <h1>Day 7 - Persistent Agent Context Chat</h1>
-        <div class="sub">LLMAgent saves history in JSON and restores it after restart.</div>
+        <h1>Day 9 - Context Compression</h1>
+        <div class="sub">Day 9: Context compression with summary + token savings tracking.</div>
       </div>
       <div class="sub">Storage: <strong>{{ history_path }}</strong> | Messages: <strong>{{ history|length }}</strong></div>
     </div>
@@ -271,6 +289,17 @@
             <label for="context_limit">Context limit tokens (demo)</label>
             <input id="context_limit" name="context_limit" value="{{ context_limit }}">
           </div>
+          <div class="field">
+            <label class="checkbox-inline"><input type="checkbox" name="compression_enabled" {% if compression_enabled %}checked{% endif %}> Enable history compression</label>
+          </div>
+          <div class="field">
+            <label for="keep_last_n">Keep last N messages (raw)</label>
+            <input id="keep_last_n" name="keep_last_n" value="{{ keep_last_n }}">
+          </div>
+          <div class="field">
+            <label for="summarize_every_n">Summarize every N old messages</label>
+            <input id="summarize_every_n" name="summarize_every_n" value="{{ summarize_every_n }}">
+          </div>
           <div class="actions">
             <button type="submit" class="btn-soft btn-block" name="action" value="clear" formnovalidate>Clear saved context</button>
           </div>
@@ -290,12 +319,13 @@
             Total tokens: <strong>{{ result.total_tokens }}</strong><br>
             Estimated cost: <strong>{{ result.cost_text }}</strong><br>
             Current request tokens: <strong>{{ result.current_request_tokens }}</strong><br>
-            History tokens: <strong>{{ result.history_tokens }}</strong><br>
+            History tokens (effective): <strong>{{ result.history_tokens_effective }}</strong><br>
+            History tokens (full): <strong>{{ result.history_tokens_full }}</strong><br>
+            Summary tokens: <strong>{{ result.summary_tokens }}</strong><br>
+            Token savings: <strong>{{ result.token_savings }}</strong><br>
+            Compression enabled: <strong>{{ result.compression_enabled }}</strong><br>
             Context estimate: <strong>{{ result.context_tokens_estimate }}</strong> / <strong>{{ result.context_limit_tokens }}</strong>
           </div>
-          {% if result.overflowed %}
-          <div class="warn">Context limit exceeded. This simulates overflow behavior for Day 8 tests.</div>
-          {% endif %}
         </div>
         {% endif %}
       </aside>
@@ -318,11 +348,11 @@
           <label for="prompt">Message</label>
           <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
           <div class="composer-actions">
-            <button class="btn-primary" type="submit" id="submit-btn" name="action" value="send">Send message</button>
-          </div>
-          <div class="loading" id="loading-indicator" aria-live="polite">
-            Agent is calling LLM API...
-            <div class="progress"><div class="bar"></div></div>
+            <button class="btn-primary" type="submit" id="submit-btn" name="action" value="send">
+              <span class="btn-spinner" aria-hidden="true"></span>
+              <span class="btn-label">Send message</span>
+            </button>
+            <button type="submit" class="btn-soft" name="action" value="compare_ab">Compare A/B</button>
           </div>
         </div>
       </main>
@@ -331,50 +361,57 @@
         <div class="panel">
           <h2 class="title">How to Verify</h2>
           <div class="hint">
-            1) Start a short dialog (1-2 messages) and note token metrics.<br>
-            2) Continue with 8-10 turns and watch `history_tokens` + `Token Growth` table.<br>
-            3) Set `Context limit tokens` to a small value (e.g. 800).<br>
-            4) Send a long request and confirm overflow warning appears.<br>
-            5) Compare token/cost growth between short and long sessions.
+            1) Turn OFF compression and send 3-4 messages. Save token values.<br>
+            2) Turn ON compression, keep_last_n=8, summarize_every_n=10, continue dialog.<br>
+            3) Compare history full/effective tokens and savings in metrics.<br>
+            4) Continue dialog and compare response quality with and without compression.<br>
+            5) Review token and estimated cost trends in `Token Growth`.
           </div>
         </div>
 
         <div class="panel">
           <h2 class="title">Demo Prompts</h2>
           <div class="hint">
-            1) "Запомни: проект LinguaSprint, KPI 1500 MAU. Дай 3 риска."<br>
-            2) "Теперь для этих рисков предложи 5 конкретных мер."<br>
-            3) "Сделай подробный план из 30 пунктов с пояснениями по каждому."<br>
-            4) Для overflow: уменьшите `Context limit tokens` и повторите шаг 3.
+            1) "Запомни: продукт LinguaSprint, KPI 1500 MAU, бюджет 20k."<br>
+            2) "Добавь 5 рисков и 5 мер для каждого риска."<br>
+            3) "Сделай детальный план на 30 пунктов и не теряй исходные условия."<br>
+            4) Нажми Compare A/B и сравни качество + Full vs Effective history tokens.<br>
+            5) Повтори шаг 3 после 10+ сообщений и оцени экономию токенов.
           </div>
         </div>
 
         <div class="panel">
           <h2 class="title">Token Growth</h2>
-          <table class="growth">
-            <thead>
-              <tr>
-                <th>Turn</th>
-                <th>Req</th>
-                <th>Hist</th>
-                <th>Resp</th>
-                <th>Sum</th>
-                <th>Cum</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in token_growth %}
-              <tr>
-                <td>#{{ row.turn }}</td>
-                <td>{{ row.current_request_tokens }}</td>
-                <td>{{ row.history_tokens }}</td>
-                <td>{{ row.response_tokens }}</td>
-                <td class="{% if row.overflowed %}overflow-cell{% endif %}">{{ row.total_turn_tokens }}</td>
-                <td>{{ row.cumulative_tokens }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+          <div class="table-wrap">
+            <table class="growth">
+              <thead>
+                <tr>
+                  <th>Turn</th>
+                  <th>Req</th>
+                  <th>Hist</th>
+                  <th>Resp</th>
+                  <th>FullHist</th>
+                  <th>Sum</th>
+                  <th>Cum</th>
+                  <th>Saved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in token_growth %}
+                <tr>
+                  <td>#{{ row.turn }}</td>
+                  <td>{{ row.current_request_tokens }}</td>
+                  <td>{{ row.history_tokens }}</td>
+                  <td>{{ row.response_tokens }}</td>
+                  <td>{{ row.history_tokens_full }}</td>
+                  <td class="{% if row.overflowed %}overflow-cell{% endif %}">{{ row.total_turn_tokens }}</td>
+                  <td>{{ row.cumulative_tokens }}</td>
+                  <td>{{ row.token_savings }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
         </div>
       </aside>
     </form>
@@ -385,12 +422,38 @@
         User message -> <strong>LLMAgent.run_chat_persistent()</strong> -> LLM API -> save JSON history -> render chat UI.
       </div>
     </div>
+
+    {% if ab_result.no_compression %}
+    <div class="panel">
+      <h2 class="title">A/B Compression Compare</h2>
+      <div class="ab-grid">
+        <div class="ab-card">
+          <strong>Without compression</strong><br>
+          Context: {{ ab_result.no_compression.context_tokens_estimate }}/{{ ab_result.no_compression.context_limit_tokens }}<br>
+          History full/effective: {{ ab_result.no_compression.history_tokens_full }}/{{ ab_result.no_compression.history_tokens_effective }}<br>
+          Token savings: {{ ab_result.no_compression.token_savings }}<br>
+          Output tokens: {{ ab_result.no_compression.output_tokens }}<br>
+          Cost: {{ ab_result.no_compression.cost_text }}<br><br>
+          {{ ab_result.no_compression.text }}
+        </div>
+        <div class="ab-card">
+          <strong>With compression</strong><br>
+          Context: {{ ab_result.with_compression.context_tokens_estimate }}/{{ ab_result.with_compression.context_limit_tokens }}<br>
+          History full/effective: {{ ab_result.with_compression.history_tokens_full }}/{{ ab_result.with_compression.history_tokens_effective }}<br>
+          Token savings: {{ ab_result.with_compression.token_savings }}<br>
+          Output tokens: {{ ab_result.with_compression.output_tokens }}<br>
+          Cost: {{ ab_result.with_compression.cost_text }}<br><br>
+          {{ ab_result.with_compression.text }}
+        </div>
+      </div>
+    </div>
+    {% endif %}
   </div>
 
   <script>
     const form = document.getElementById("prompt-form");
-    const loading = document.getElementById("loading-indicator");
     const button = document.getElementById("submit-btn");
+    const buttonLabel = button ? button.querySelector(".btn-label") : null;
     const chatWindow = document.getElementById("chat-window");
 
     if (chatWindow) {
@@ -399,13 +462,15 @@
 
     form.addEventListener("submit", (event) => {
       const action = event.submitter ? event.submitter.value : "send";
-      if (action !== "send") return;
+      if (action !== "send" && action !== "compare_ab") return;
       if (chatWindow) {
         chatWindow.scrollTop = chatWindow.scrollHeight;
       }
-      loading.style.display = "block";
+      button.classList.add("loading");
       button.disabled = true;
-      button.textContent = "Sending...";
+      if (buttonLabel) {
+        buttonLabel.textContent = "Sending...";
+      }
     });
   </script>
 </body>

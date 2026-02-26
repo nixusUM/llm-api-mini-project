@@ -44,7 +44,8 @@ def build_token_growth(history: list[dict]) -> list[dict]:
         if not isinstance(meta, dict):
             continue
         current_request = int(meta.get("current_request_tokens", 0) or 0)
-        history_tokens = int(meta.get("history_tokens", 0) or 0)
+        history_tokens = int(meta.get("history_tokens_effective", meta.get("history_tokens", 0)) or 0)
+        history_tokens_full = int(meta.get("history_tokens_full", history_tokens) or 0)
         response_tokens = int(meta.get("response_tokens", 0) or 0)
         total_turn = current_request + history_tokens + response_tokens
         cumulative += total_turn
@@ -53,14 +54,39 @@ def build_token_growth(history: list[dict]) -> list[dict]:
                 "turn": turn,
                 "current_request_tokens": current_request,
                 "history_tokens": history_tokens,
+                "history_tokens_full": history_tokens_full,
                 "response_tokens": response_tokens,
                 "total_turn_tokens": total_turn,
                 "cumulative_tokens": cumulative,
                 "overflowed": bool(meta.get("overflowed", False)),
+                "token_savings": int(meta.get("token_savings", 0) or 0),
+                "compression_enabled": bool(meta.get("compression_enabled", False)),
             }
         )
         turn += 1
     return rows
+
+
+def response_to_view(result) -> dict:
+    return {
+        "text": result.text,
+        "used_model": result.used_model,
+        "input_tokens": result.input_tokens,
+        "output_tokens": result.output_tokens,
+        "total_tokens": result.total_tokens,
+        "latency_ms": result.latency_ms,
+        "cost_text": result.cost_text,
+        "current_request_tokens": result.current_request_tokens,
+        "history_tokens": result.history_tokens,
+        "context_tokens_estimate": result.context_tokens_estimate,
+        "context_limit_tokens": result.context_limit_tokens,
+        "overflowed": result.overflowed,
+        "history_tokens_full": result.history_tokens_full,
+        "history_tokens_effective": result.history_tokens_effective,
+        "summary_tokens": result.summary_tokens,
+        "token_savings": result.token_savings,
+        "compression_enabled": result.compression_enabled,
+    }
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -78,7 +104,11 @@ def index():
     temperature = "0.7"
     max_tokens = "600"
     context_limit = "200000"
+    compression_enabled = True
+    keep_last_n = "8"
+    summarize_every_n = "10"
     result = {}
+    ab_result = {}
     history = agent.load_history()
     history_path = str(agent.history_path)
     token_growth = build_token_growth(history)
@@ -95,7 +125,11 @@ def index():
                 temperature=temperature,
                 max_tokens=max_tokens,
                 context_limit=context_limit,
+                compression_enabled=compression_enabled,
+                keep_last_n=keep_last_n,
+                summarize_every_n=summarize_every_n,
                 result={},
+                ab_result={},
                 history=[],
                 history_path=history_path,
                 token_growth=[],
@@ -108,34 +142,44 @@ def index():
         temperature = request.form.get("temperature", "0.7").strip()
         max_tokens = request.form.get("max_tokens", "600").strip()
         context_limit = request.form.get("context_limit", "200000").strip()
+        compression_enabled = request.form.get("compression_enabled") == "on"
+        keep_last_n = request.form.get("keep_last_n", "8").strip()
+        summarize_every_n = request.form.get("summarize_every_n", "10").strip()
         parsed_temp = parse_temperature(temperature, 0.7)
         parsed_max_tokens = parse_max_tokens(max_tokens, 600)
         parsed_context_limit = parse_context_limit(context_limit, 200000)
+        parsed_keep_last_n = max(2, min(int(keep_last_n) if keep_last_n.isdigit() else 8, 60))
+        parsed_summarize_every_n = max(2, min(int(summarize_every_n) if summarize_every_n.isdigit() else 10, 50))
         if prompt:
-            agent_result = agent.run_chat_persistent(
-                user_message=prompt,
-                model_id=selected_model,
-                temperature=parsed_temp,
-                max_tokens=parsed_max_tokens,
-                context_limit_override=parsed_context_limit,
-            )
-            result = {
-                "text": agent_result.text,
-                "used_model": agent_result.used_model,
-                "input_tokens": agent_result.input_tokens,
-                "output_tokens": agent_result.output_tokens,
-                "total_tokens": agent_result.total_tokens,
-                "latency_ms": agent_result.latency_ms,
-                "cost_text": agent_result.cost_text,
-                "current_request_tokens": agent_result.current_request_tokens,
-                "history_tokens": agent_result.history_tokens,
-                "context_tokens_estimate": agent_result.context_tokens_estimate,
-                "context_limit_tokens": agent_result.context_limit_tokens,
-                "overflowed": agent_result.overflowed,
-            }
-            history = agent.load_history()
-            token_growth = build_token_growth(history)
-            prompt = ""
+            if action == "compare_ab":
+                compared = agent.compare_compression(
+                    user_message=prompt,
+                    model_id=selected_model,
+                    temperature=parsed_temp,
+                    max_tokens=parsed_max_tokens,
+                    context_limit_override=parsed_context_limit,
+                    keep_last_n=parsed_keep_last_n,
+                    summarize_every_n=parsed_summarize_every_n,
+                )
+                ab_result = {
+                    "no_compression": response_to_view(compared["no_compression"]),
+                    "with_compression": response_to_view(compared["with_compression"]),
+                }
+            else:
+                agent_result = agent.run_chat_persistent(
+                    user_message=prompt,
+                    model_id=selected_model,
+                    temperature=parsed_temp,
+                    max_tokens=parsed_max_tokens,
+                    context_limit_override=parsed_context_limit,
+                    compression_enabled=compression_enabled,
+                    keep_last_n=parsed_keep_last_n,
+                    summarize_every_n=parsed_summarize_every_n,
+                )
+                result = response_to_view(agent_result)
+                history = agent.load_history()
+                token_growth = build_token_growth(history)
+                prompt = ""
         else:
             result = {"text": "Prompt is empty."}
 
@@ -147,7 +191,11 @@ def index():
         temperature=temperature,
         max_tokens=max_tokens,
         context_limit=context_limit,
+        compression_enabled=compression_enabled,
+        keep_last_n=keep_last_n,
+        summarize_every_n=summarize_every_n,
         result=result,
+        ab_result=ab_result,
         history=history,
         history_path=history_path,
         token_growth=token_growth,
