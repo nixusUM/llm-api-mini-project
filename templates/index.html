@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LLM Agent Chat</title>
+  <title>Day 10 - Context Strategies</title>
   <style>
     :root {
       --bg: #0b1220;
@@ -16,18 +16,25 @@
       --border: #25324d;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
       font-family: Inter, Arial, sans-serif;
       color: var(--text);
-      background: radial-gradient(1100px 700px at 0% -10%, #1f2b48 0%, var(--bg) 55%);
+      background: radial-gradient(1200px 740px at 0% -15%, #1f2b48 0%, var(--bg) 55%);
+      overflow: hidden;
     }
     .container {
-      max-width: 1320px;
-      margin: 18px auto 26px;
+      max-width: 1360px;
+      margin: 16px auto 24px;
       padding: 0 16px;
+      height: calc(100vh - 32px);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
     .header {
+      flex-shrink: 0;
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 12px 14px;
@@ -42,9 +49,24 @@
     .header .sub { color: var(--muted); font-size: 13px; }
     .layout {
       display: grid;
-      grid-template-columns: 290px minmax(0, 1fr) 300px;
+      grid-template-columns: 320px minmax(0, 1fr) 320px;
+      grid-template-rows: 1fr;
       gap: 12px;
-      align-items: start;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .layout > main {
+      min-height: 0;
+      overflow: hidden;
+    }
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+      overflow-y: auto;
+      padding-right: 2px;
     }
     .panel {
       border: 1px solid var(--border);
@@ -52,11 +74,28 @@
       background: var(--panel);
       padding: 12px;
     }
-    .stack {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      position: static;
+    .title { margin: 2px 0 8px; font-size: 16px; }
+    .hint {
+      border: 1px dashed #365082;
+      background: #101a2d;
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: #b5c3e7;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+    .status {
+      border: 1px solid #35618f;
+      border-radius: 10px;
+      background: #0f2039;
+      color: #b3d4ff;
+      padding: 8px 10px;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+    .status-global {
+      margin-top: 10px;
+      font-size: 13px;
     }
     label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 13px; }
     textarea, input, select {
@@ -65,20 +104,26 @@
       border: 1px solid var(--border);
       background: #0f1728;
       color: var(--text);
-      padding: 10px 12px;
+      padding: 9px 11px;
       outline: none;
     }
-    textarea { resize: none; }
     .field { margin-bottom: 10px; }
-    .actions { display: flex; gap: 8px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
     button {
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 10px 13px;
+      padding: 9px 12px;
       color: var(--text);
       background: #111a2c;
       cursor: pointer;
+      font-size: 13px;
     }
+    .btn-clear {
+      border-color: #5a2a2a;
+      background: #1a1515;
+      color: #e8a0a0;
+    }
+    .btn-clear:hover { background: #2a1a1a; }
     .btn-primary {
       background: linear-gradient(90deg, var(--accent), var(--accent-2));
       border: none;
@@ -89,8 +134,6 @@
       justify-content: center;
       gap: 8px;
     }
-    .btn-soft { background: #111a2c; }
-    .btn-block { width: 100%; }
     .btn-spinner {
       width: 14px;
       height: 14px;
@@ -100,42 +143,25 @@
       animation: spin 0.8s linear infinite;
       display: none;
     }
-    .btn-primary.loading .btn-spinner {
-      display: inline-block;
-    }
-    .btn-primary.loading .btn-label {
-      opacity: 0.9;
-    }
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    .title { margin: 2px 0 8px; font-size: 16px; }
-    .meta { color: var(--muted); font-size: 13px; line-height: 1.45; }
-    .hint {
-      border: 1px dashed #365082;
-      background: #101a2d;
-      border-radius: 10px;
-      padding: 10px 12px;
-      color: #b5c3e7;
-      line-height: 1.45;
-      font-size: 13px;
-    }
+    .btn-primary.loading .btn-spinner { display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .chat-shell {
-      display: grid;
-      grid-template-rows: 1fr auto;
-      height: 72vh;
-      max-height: 72vh;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
       gap: 10px;
     }
     .chat-window {
+      flex: 1;
       min-height: 0;
       overflow-y: auto;
       overflow-x: hidden;
       padding: 6px 6px 0 2px;
-      scroll-behavior: smooth;
       display: flex;
       flex-direction: column;
       gap: 10px;
+      scroll-behavior: smooth;
     }
     .msg {
       border-radius: 12px;
@@ -145,13 +171,6 @@
       border: 1px solid var(--border);
       overflow-wrap: anywhere;
       word-break: break-word;
-      overflow: visible;
-      max-height: none;
-      height: auto;
-    }
-    .msg * {
-      overflow: visible !important;
-      max-height: none !important;
     }
     .msg-user { background: #0f1f3c; margin-left: 70px; }
     .msg-assistant { background: var(--panel-soft); margin-right: 70px; }
@@ -162,68 +181,44 @@
       letter-spacing: .05em;
       margin-bottom: 5px;
     }
-    .stats { color: var(--muted); font-size: 13px; line-height: 1.55; }
-    .stats strong { color: var(--text); }
-    .warn {
-      border: 1px solid #8a3746;
-      background: #2a1420;
-      color: #ffced6;
-      border-radius: 10px;
-      padding: 8px 10px;
-      margin-top: 8px;
-      font-size: 12px;
-      line-height: 1.45;
+    .composer {
+      flex-shrink: 0;
     }
-    .growth {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 4px;
-      min-width: 420px;
-    }
-    .growth th,
-    .growth td {
-      border-bottom: 1px solid var(--border);
-      padding: 6px 4px;
-      text-align: right;
-    }
-    .growth th:first-child,
-    .growth td:first-child {
-      text-align: left;
-    }
-    .overflow-cell { color: #ffced6; }
-    .checkbox-inline {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 0;
-      cursor: pointer;
-    }
-    .checkbox-inline input[type="checkbox"] {
-      width: auto;
-      margin: 0;
-    }
-    .table-wrap {
-      width: 100%;
-      overflow-x: auto;
-    }
-    .composer textarea {
-      min-height: 84px;
-      max-height: 170px;
-      resize: vertical;
-    }
+    .composer textarea { min-height: 82px; max-height: 190px; resize: vertical; }
     .composer-actions {
       margin-top: 8px;
       display: flex;
       justify-content: flex-end;
       gap: 8px;
+      flex-wrap: wrap;
     }
+    .stats { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .stats strong { color: var(--text); }
+    .facts-list, .cp-list {
+      margin: 0;
+      padding-left: 16px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .table-wrap { width: 100%; overflow-x: auto; }
+    .growth {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      color: var(--muted);
+      min-width: 620px;
+    }
+    .growth th, .growth td {
+      border-bottom: 1px solid var(--border);
+      padding: 6px 4px;
+      text-align: right;
+    }
+    .growth th:first-child, .growth td:first-child { text-align: left; }
     .ab-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-top: 8px;
+      grid-template-columns: 1fr;
+      gap: 8px;
     }
     .ab-card {
       border: 1px solid var(--border);
@@ -232,25 +227,20 @@
       padding: 10px;
       font-size: 12px;
       color: var(--muted);
-      line-height: 1.5;
+      line-height: 1.45;
       white-space: pre-wrap;
     }
     .ab-card strong { color: var(--text); }
-    .empty {
-      color: var(--muted);
-      text-align: center;
-      padding: 20px 12px;
-      border: 1px dashed var(--border);
-      border-radius: 10px;
-    }
-    @media (max-width: 1100px) {
-      .layout {
-        grid-template-columns: 1fr;
+    @media (max-width: 1160px) {
+      body { overflow: auto; }
+      .layout { grid-template-columns: 1fr; }
+      .chat-shell { min-height: 60vh; }
+      .container {
+        height: auto;
+        overflow: visible;
       }
-      .stack { position: static; }
-      .chat-shell {
-        height: 62vh;
-        max-height: 62vh;
+      .stack {
+        overflow: visible;
       }
     }
   </style>
@@ -259,16 +249,31 @@
   <div class="container">
     <div class="header">
       <div>
-        <h1>Day 9 - Context Compression</h1>
-        <div class="sub">Day 9: Context compression with summary + token savings tracking.</div>
+        <h1>Day 10 - Context Strategies (No Summary Compression)</h1>
+        <div class="sub">Sliding Window / Sticky Facts / Branching with branch controls and A/B compare.</div>
+        {% if status %}
+        <div class="status status-global">{{ status }}</div>
+        {% endif %}
       </div>
-      <div class="sub">Storage: <strong>{{ history_path }}</strong> | Messages: <strong>{{ history|length }}</strong></div>
+      <div class="sub">State: <strong>{{ state_path }}</strong> | Active branch: <strong>{{ active_branch }}</strong></div>
     </div>
 
     <form method="post" id="prompt-form" class="layout">
       <aside class="stack">
         <div class="panel">
-          <h2 class="title">Model Settings</h2>
+          <h2 class="title">Strategy + Model</h2>
+          <div class="field">
+            <label for="strategy">Context strategy</label>
+            <select id="strategy" name="strategy">
+              {% for st in strategies %}
+              <option value="{{ st }}" {% if st == strategy %}selected{% endif %}>{{ st }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="window_n">Sliding/Facts window N</label>
+            <input id="window_n" name="window_n" value="{{ window_n }}">
+          </div>
           <div class="field">
             <label for="selected_model">Model</label>
             <select id="selected_model" name="selected_model">
@@ -289,45 +294,51 @@
             <label for="context_limit">Context limit tokens (demo)</label>
             <input id="context_limit" name="context_limit" value="{{ context_limit }}">
           </div>
-          <div class="field">
-            <label class="checkbox-inline"><input type="checkbox" name="compression_enabled" {% if compression_enabled %}checked{% endif %}> Enable history compression</label>
-          </div>
-          <div class="field">
-            <label for="keep_last_n">Keep last N messages (raw)</label>
-            <input id="keep_last_n" name="keep_last_n" value="{{ keep_last_n }}">
-          </div>
-          <div class="field">
-            <label for="summarize_every_n">Summarize every N old messages</label>
-            <input id="summarize_every_n" name="summarize_every_n" value="{{ summarize_every_n }}">
-          </div>
-          <div class="actions">
-            <button type="submit" class="btn-soft btn-block" name="action" value="clear" formnovalidate>Clear saved context</button>
-          </div>
-          <div class="actions" style="margin-top: 8px;">
-            <button type="submit" class="btn-soft btn-block" name="action" value="clear_all" formnovalidate>Clear all history</button>
-          </div>
         </div>
 
-        {% if result.text %}
         <div class="panel">
-          <h2 class="title">Last Metrics</h2>
-          <div class="stats">
-            Model: <strong>{{ result.used_model }}</strong><br>
-            Latency: <strong>{{ result.latency_ms }} ms</strong><br>
-            Input tokens: <strong>{{ result.input_tokens }}</strong><br>
-            Output tokens: <strong>{{ result.output_tokens }}</strong><br>
-            Total tokens: <strong>{{ result.total_tokens }}</strong><br>
-            Estimated cost: <strong>{{ result.cost_text }}</strong><br>
-            Current request tokens: <strong>{{ result.current_request_tokens }}</strong><br>
-            History tokens (effective): <strong>{{ result.history_tokens_effective }}</strong><br>
-            History tokens (full): <strong>{{ result.history_tokens_full }}</strong><br>
-            Summary tokens: <strong>{{ result.summary_tokens }}</strong><br>
-            Token savings: <strong>{{ result.token_savings }}</strong><br>
-            Compression enabled: <strong>{{ result.compression_enabled }}</strong><br>
-            Context estimate: <strong>{{ result.context_tokens_estimate }}</strong> / <strong>{{ result.context_limit_tokens }}</strong>
+          <h2 class="title">Branching Controls</h2>
+          <div class="actions" style="margin-bottom: 10px;">
+            <button type="submit" name="action" value="clear_all" formnovalidate class="btn-clear">Clear all state</button>
           </div>
+          <div class="field">
+            <label for="selected_branch">Branch</label>
+            <select id="selected_branch" name="selected_branch">
+              {% for branch in branches %}
+              <option value="{{ branch }}" {% if branch == active_branch %}selected{% endif %}>{{ branch }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="actions">
+            <button type="submit" name="action" value="switch_branch" formnovalidate>Switch branch</button>
+          </div>
+          <div class="field" style="margin-top: 10px;">
+            <label for="checkpoint_label">Checkpoint label</label>
+            <input id="checkpoint_label" name="checkpoint_label" value="{{ checkpoint_label }}" placeholder="e.g. before redesign">
+          </div>
+          <div class="actions">
+            <button type="submit" name="action" value="create_checkpoint" formnovalidate>Create checkpoint</button>
+          </div>
+          <div class="field" style="margin-top: 10px;">
+            <label for="source_checkpoint_id">Source checkpoint</label>
+            <select id="source_checkpoint_id" name="source_checkpoint_id">
+              <option value="">Select checkpoint</option>
+              {% for cp in checkpoints %}
+              <option value="{{ cp.id }}" {% if cp.id == source_checkpoint_id %}selected{% endif %}>{{ cp.id }} - {{ cp.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="new_branch_name">New branch name</label>
+            <input id="new_branch_name" name="new_branch_name" value="{{ new_branch_name }}" placeholder="e.g. option_b">
+          </div>
+          <div class="actions">
+            <button type="submit" name="action" value="create_branch" formnovalidate>Create branch from checkpoint</button>
+          </div>
+          {% if status %}
+          <div class="status">{{ status }}</div>
+          {% endif %}
         </div>
-        {% endif %}
       </aside>
 
       <main class="panel chat-shell">
@@ -340,7 +351,7 @@
             </div>
             {% endfor %}
           {% else %}
-            <div class="empty">No messages yet. Start the chat from the input below.</div>
+            <div class="hint">No messages yet. Start the scenario and continue for 10-15 turns.</div>
           {% endif %}
         </div>
 
@@ -352,125 +363,145 @@
               <span class="btn-spinner" aria-hidden="true"></span>
               <span class="btn-label">Send message</span>
             </button>
-            <button type="submit" class="btn-soft" name="action" value="compare_ab">Compare A/B</button>
+            <button type="submit" name="action" value="compare_strategies">Compare 3 strategies</button>
           </div>
         </div>
       </main>
 
       <aside class="stack">
         <div class="panel">
-          <h2 class="title">How to Verify</h2>
+          <h2 class="title">Sticky Facts (active branch)</h2>
+          <ul class="facts-list">
+            {% for key, value in facts.items() %}
+            <li><strong>{{ key }}</strong>: {{ value }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Checkpoints</h2>
+          <ul class="cp-list">
+            {% for cp in checkpoints %}
+            <li>{{ cp.id }} - {{ cp.label }} (idx: {{ cp.message_index }})</li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        {% if result.text %}
+        <div class="panel">
+          <h2 class="title">Last Metrics</h2>
+          <div class="stats">
+            Strategy: <strong>{{ result.strategy }}</strong><br>
+            Branch: <strong>{{ result.branch }}</strong><br>
+            Model: <strong>{{ result.used_model }}</strong><br>
+            Latency: <strong>{{ result.latency_ms }} ms</strong><br>
+            Total tokens: <strong>{{ result.total_tokens }}</strong><br>
+            Request tokens: <strong>{{ result.current_request_tokens }}</strong><br>
+            History full/effective: <strong>{{ result.history_tokens_full }}/{{ result.history_tokens_effective }}</strong><br>
+            Facts tokens: <strong>{{ result.facts_tokens }}</strong><br>
+            Context estimate: <strong>{{ result.context_tokens_estimate }}/{{ result.context_limit_tokens }}</strong><br>
+            Cost: <strong>{{ result.cost_text }}</strong>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="panel">
+          <h2 class="title">How to Verify Day 10</h2>
           <div class="hint">
-            1) Turn OFF compression and send 3-4 messages. Save token values.<br>
-            2) Turn ON compression, keep_last_n=8, summarize_every_n=10, continue dialog.<br>
-            3) Compare history full/effective tokens and savings in metrics.<br>
-            4) Continue dialog and compare response quality with and without compression.<br>
-            5) Review token and estimated cost trends in `Token Growth`.
+            1) Run same 10-15 message scenario in each strategy.<br>
+            2) Sliding: watch important details drop after window.<br>
+            3) Facts: verify key facts persist with lower effective history.<br>
+            4) Branching: create checkpoint + 2 branches and diverge decisions.<br>
+            5) Compare quality, stability, tokens and usability.
           </div>
         </div>
 
         <div class="panel">
           <h2 class="title">Demo Prompts</h2>
           <div class="hint">
-            1) "Запомни: продукт LinguaSprint, KPI 1500 MAU, бюджет 20k."<br>
-            2) "Добавь 5 рисков и 5 мер для каждого риска."<br>
-            3) "Сделай детальный план на 30 пунктов и не теряй исходные условия."<br>
-            4) Нажми Compare A/B и сравни качество + Full vs Effective history tokens.<br>
-            5) Повтори шаг 3 после 10+ сообщений и оцени экономию токенов.
+            1) "Собираем ТЗ: продукт - LinguaSprint, цель - 1500 MAU, бюджет - 20k."<br>
+            2) "Добавь ограничения: срок 3 недели, команда 2 человека."<br>
+            3) "Сделай вариант A архитектуры и риски."<br>
+            4) "Сохрани checkpoint и сделай ветку option_b."<br>
+            5) "В ветке option_b предложи другой план и сравни с A."
           </div>
         </div>
 
         <div class="panel">
-          <h2 class="title">Token Growth</h2>
+          <h2 class="title">Token Growth (active branch)</h2>
           <div class="table-wrap">
             <table class="growth">
               <thead>
                 <tr>
                   <th>Turn</th>
+                  <th>Strategy</th>
                   <th>Req</th>
-                  <th>Hist</th>
+                  <th>HistFull</th>
+                  <th>HistEff</th>
+                  <th>Facts</th>
                   <th>Resp</th>
-                  <th>FullHist</th>
-                  <th>Sum</th>
+                  <th>Total</th>
                   <th>Cum</th>
-                  <th>Saved</th>
                 </tr>
               </thead>
               <tbody>
                 {% for row in token_growth %}
                 <tr>
                   <td>#{{ row.turn }}</td>
-                  <td>{{ row.current_request_tokens }}</td>
-                  <td>{{ row.history_tokens }}</td>
-                  <td>{{ row.response_tokens }}</td>
-                  <td>{{ row.history_tokens_full }}</td>
-                  <td class="{% if row.overflowed %}overflow-cell{% endif %}">{{ row.total_turn_tokens }}</td>
-                  <td>{{ row.cumulative_tokens }}</td>
-                  <td>{{ row.token_savings }}</td>
+                  <td>{{ row.strategy }}</td>
+                  <td>{{ row.req }}</td>
+                  <td>{{ row.hist_full }}</td>
+                  <td>{{ row.hist_effective }}</td>
+                  <td>{{ row.facts_tokens }}</td>
+                  <td>{{ row.resp }}</td>
+                  <td>{{ row.total }}</td>
+                  <td>{{ row.cumulative }}</td>
                 </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
         </div>
+
+        {% if compare_result %}
+        <div class="panel" id="compare-result-panel">
+          <h2 class="title">Strategy Compare (same prompt)</h2>
+          <div class="ab-grid">
+            {% for st, res in compare_result.items() %}
+            <div class="ab-card">
+              <strong>{{ st }}</strong><br>
+              Context: {{ res.context_tokens_estimate }}/{{ res.context_limit_tokens }}<br>
+              Hist full/effective: {{ res.history_tokens_full }}/{{ res.history_tokens_effective }}<br>
+              Facts tokens: {{ res.facts_tokens }}<br>
+              Output tokens: {{ res.output_tokens }}<br>
+              Cost: {{ res.cost_text }}<br><br>
+              {{ res.text }}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
       </aside>
     </form>
-
-    <div class="panel">
-      <h2 class="title">Agent Pipeline</h2>
-      <div class="hint">
-        User message -> <strong>LLMAgent.run_chat_persistent()</strong> -> LLM API -> save JSON history -> render chat UI.
-      </div>
-    </div>
-
-    {% if ab_result.no_compression %}
-    <div class="panel">
-      <h2 class="title">A/B Compression Compare</h2>
-      <div class="ab-grid">
-        <div class="ab-card">
-          <strong>Without compression</strong><br>
-          Context: {{ ab_result.no_compression.context_tokens_estimate }}/{{ ab_result.no_compression.context_limit_tokens }}<br>
-          History full/effective: {{ ab_result.no_compression.history_tokens_full }}/{{ ab_result.no_compression.history_tokens_effective }}<br>
-          Token savings: {{ ab_result.no_compression.token_savings }}<br>
-          Output tokens: {{ ab_result.no_compression.output_tokens }}<br>
-          Cost: {{ ab_result.no_compression.cost_text }}<br><br>
-          {{ ab_result.no_compression.text }}
-        </div>
-        <div class="ab-card">
-          <strong>With compression</strong><br>
-          Context: {{ ab_result.with_compression.context_tokens_estimate }}/{{ ab_result.with_compression.context_limit_tokens }}<br>
-          History full/effective: {{ ab_result.with_compression.history_tokens_full }}/{{ ab_result.with_compression.history_tokens_effective }}<br>
-          Token savings: {{ ab_result.with_compression.token_savings }}<br>
-          Output tokens: {{ ab_result.with_compression.output_tokens }}<br>
-          Cost: {{ ab_result.with_compression.cost_text }}<br><br>
-          {{ ab_result.with_compression.text }}
-        </div>
-      </div>
-    </div>
-    {% endif %}
   </div>
 
   <script>
     const form = document.getElementById("prompt-form");
-    const button = document.getElementById("submit-btn");
-    const buttonLabel = button ? button.querySelector(".btn-label") : null;
+    const sendBtn = document.getElementById("submit-btn");
+    const sendLabel = sendBtn ? sendBtn.querySelector(".btn-label") : null;
     const chatWindow = document.getElementById("chat-window");
 
-    if (chatWindow) {
-      chatWindow.scrollTop = chatWindow.scrollHeight;
-    }
+    if (chatWindow) chatWindow.scrollTop = chatWindow.scrollHeight;
+
+    var comparePanel = document.getElementById("compare-result-panel");
+    if (comparePanel) comparePanel.scrollIntoView({ behavior: "smooth", block: "start" });
 
     form.addEventListener("submit", (event) => {
       const action = event.submitter ? event.submitter.value : "send";
-      if (action !== "send" && action !== "compare_ab") return;
-      if (chatWindow) {
-        chatWindow.scrollTop = chatWindow.scrollHeight;
-      }
-      button.classList.add("loading");
-      button.disabled = true;
-      if (buttonLabel) {
-        buttonLabel.textContent = "Sending...";
-      }
+      if (action !== "send") return;
+      sendBtn.classList.add("loading");
+      sendBtn.disabled = true;
+      if (sendLabel) sendLabel.textContent = "Sending...";
     });
   </script>
 </body>

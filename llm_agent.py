@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -15,27 +16,100 @@ class AgentResponse:
     total_tokens: int
     latency_ms: int
     cost_text: str
+    strategy: str
+    branch: str
     current_request_tokens: int
-    history_tokens: int
+    history_tokens_full: int
+    history_tokens_effective: int
+    facts_tokens: int
     context_tokens_estimate: int
     context_limit_tokens: int
     overflowed: bool
-    history_tokens_full: int
-    history_tokens_effective: int
-    summary_tokens: int
-    token_savings: int
-    compression_enabled: bool
 
 
 class LLMAgent:
-    def __init__(self, history_path: str = "data/chat_history.json") -> None:
-        self.history_path = Path(history_path)
-        self.history_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, state_path: str = "data/agent_state.json") -> None:
+        self.state_path = Path(state_path)
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def load_history(self) -> list[dict]:
-        return self._load_state()["all_messages"]
+    def load_history(self, branch_id: str | None = None) -> list[dict]:
+        state = self._load_state()
+        active = branch_id or state["active_branch"]
+        branch = self._get_branch(state, active)
+        return list(branch["messages"])
 
-    def clear_history(self) -> None:
+    def load_facts(self, branch_id: str | None = None) -> dict[str, str]:
+        state = self._load_state()
+        active = branch_id or state["active_branch"]
+        branch = self._get_branch(state, active)
+        return dict(branch["facts"])
+
+    def list_checkpoints(self, branch_id: str | None = None) -> list[dict]:
+        state = self._load_state()
+        active = branch_id or state["active_branch"]
+        branch = self._get_branch(state, active)
+        return list(branch["checkpoints"])
+
+    def list_branches(self) -> list[str]:
+        state = self._load_state()
+        return sorted(state["branches"].keys())
+
+    def get_active_branch(self) -> str:
+        return self._load_state()["active_branch"]
+
+    def switch_branch(self, branch_id: str) -> bool:
+        state = self._load_state()
+        if branch_id not in state["branches"]:
+            return False
+        state["active_branch"] = branch_id
+        self._save_state(state)
+        return True
+
+    def create_checkpoint(self, label: str, branch_id: str | None = None) -> str:
+        state = self._load_state()
+        active = branch_id or state["active_branch"]
+        branch = self._get_branch(state, active)
+        checkpoint_id = f"cp_{len(branch['checkpoints']) + 1}"
+        branch["checkpoints"].append(
+            {
+                "id": checkpoint_id,
+                "label": label.strip() or checkpoint_id,
+                "message_index": len(branch["messages"]),
+            }
+        )
+        self._save_state(state)
+        return checkpoint_id
+
+    def create_branch_from_checkpoint(
+        self,
+        source_branch: str,
+        checkpoint_id: str,
+        new_branch: str,
+    ) -> tuple[bool, str]:
+        state = self._load_state()
+        source = self._get_branch(state, source_branch)
+        if new_branch in state["branches"]:
+            return False, "Branch already exists."
+        checkpoint = next((cp for cp in source["checkpoints"] if cp["id"] == checkpoint_id), None)
+        if not checkpoint:
+            return False, "Checkpoint not found."
+        idx = int(checkpoint["message_index"])
+        state["branches"][new_branch] = {
+            "messages": list(source["messages"][:idx]),
+            "facts": dict(source["facts"]),
+            "checkpoints": [],
+        }
+        state["active_branch"] = new_branch
+        self._save_state(state)
+        return True, "Branch created."
+
+    def clear_branch(self, branch_id: str | None = None) -> None:
+        state = self._load_state()
+        active = branch_id or state["active_branch"]
+        state["branches"][active] = {"messages": [], "facts": {}, "checkpoints": []}
+        self._save_state(state)
+
+    def clear_all(self) -> None:
         self._save_state(self._default_state())
 
     def run_chat_persistent(
@@ -44,192 +118,101 @@ class LLMAgent:
         model_id: str,
         temperature: float,
         max_tokens: int,
+        strategy: str,
+        window_n: int,
+        branch_id: str | None = None,
         context_limit_override: int | None = None,
-        compression_enabled: bool = True,
-        keep_last_n: int = 8,
-        summarize_every_n: int = 10,
     ) -> AgentResponse:
         state = self._load_state()
-        all_messages = state["all_messages"]
-        summary = state["summary"]
-        recent_messages = state["recent_messages"]
+        active = branch_id or state["active_branch"]
+        if active not in state["branches"]:
+            state["branches"][active] = {"messages": [], "facts": {}, "checkpoints": []}
+        state["active_branch"] = active
+        branch = self._get_branch(state, active)
 
-        if compression_enabled:
-            summary, recent_messages = self._compress_recent_messages(
-                summary=summary,
-                recent_messages=recent_messages,
-                model_id=model_id,
-                keep_last_n=keep_last_n,
-                summarize_every_n=summarize_every_n,
-            )
+        if strategy == "facts":
+            self._update_facts(branch["facts"], user_message)
 
-        active_history = recent_messages if compression_enabled else all_messages
-        response = self.run_chat(
-            history=active_history,
+        full_history = list(branch["messages"])
+        effective_history = self._select_history_for_strategy(full_history, strategy, window_n)
+        facts_text = self._facts_to_text(branch["facts"]) if strategy == "facts" else ""
+
+        response = self._run_with_context(
             user_message=user_message,
             model_id=model_id,
             temperature=temperature,
             max_tokens=max_tokens,
+            strategy=strategy,
+            branch=active,
+            full_history=full_history,
+            effective_history=effective_history,
+            facts_text=facts_text,
             context_limit_override=context_limit_override,
-            summary=summary if compression_enabled else "",
-            compression_enabled=compression_enabled,
-            full_history=all_messages,
         )
 
-        user_item = {"role": "user", "content": user_message.strip()}
-        assistant_item = {
-            "role": "assistant",
-            "content": response.text,
-            "meta": {
-                "current_request_tokens": response.current_request_tokens,
-                "history_tokens": response.history_tokens,
-                "context_tokens_estimate": response.context_tokens_estimate,
-                "context_limit_tokens": response.context_limit_tokens,
-                "response_tokens": response.output_tokens,
-                "overflowed": response.overflowed,
-                "history_tokens_full": response.history_tokens_full,
-                "history_tokens_effective": response.history_tokens_effective,
-                "summary_tokens": response.summary_tokens,
-                "token_savings": response.token_savings,
-                "compression_enabled": response.compression_enabled,
-            },
-        }
-        all_messages.append(user_item)
-        all_messages.append(assistant_item)
-        recent_messages.append(user_item)
-        recent_messages.append(assistant_item)
-
-        if compression_enabled:
-            summary, recent_messages = self._compress_recent_messages(
-                summary=summary,
-                recent_messages=recent_messages,
-                model_id=model_id,
-                keep_last_n=keep_last_n,
-                summarize_every_n=summarize_every_n,
-            )
-
-        state_to_save = {
-            "summary": summary,
-            "recent_messages": recent_messages[-60:],
-            "all_messages": all_messages[-200:],
-        }
-        self._save_state(state_to_save)
+        branch["messages"].append({"role": "user", "content": user_message.strip()})
+        branch["messages"].append(
+            {
+                "role": "assistant",
+                "content": response.text,
+                "meta": {
+                    "strategy": strategy,
+                    "current_request_tokens": response.current_request_tokens,
+                    "history_tokens_full": response.history_tokens_full,
+                    "history_tokens_effective": response.history_tokens_effective,
+                    "facts_tokens": response.facts_tokens,
+                    "response_tokens": response.output_tokens,
+                    "total_turn_tokens": (
+                        response.current_request_tokens
+                        + response.history_tokens_effective
+                        + response.output_tokens
+                    ),
+                },
+            }
+        )
+        branch["messages"] = branch["messages"][-220:]
+        self._save_state(state)
         return response
 
-    def compare_compression(
+    def _run_with_context(
         self,
         user_message: str,
         model_id: str,
         temperature: float,
         max_tokens: int,
-        context_limit_override: int | None = None,
-        keep_last_n: int = 8,
-        summarize_every_n: int = 10,
-    ) -> dict[str, AgentResponse]:
-        state = self._load_state()
-        all_messages = list(state["all_messages"])
-
-        no_compression = self.run_chat(
-            history=all_messages,
-            user_message=user_message,
-            model_id=model_id,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            context_limit_override=context_limit_override,
-            summary="",
-            compression_enabled=False,
-            full_history=all_messages,
-        )
-
-        summary, recent = self._compress_recent_messages(
-            summary=state["summary"],
-            recent_messages=list(state["recent_messages"]),
-            model_id=model_id,
-            keep_last_n=keep_last_n,
-            summarize_every_n=summarize_every_n,
-        )
-        with_compression = self.run_chat(
-            history=recent,
-            user_message=user_message,
-            model_id=model_id,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            context_limit_override=context_limit_override,
-            summary=summary,
-            compression_enabled=True,
-            full_history=all_messages,
-        )
-
-        return {"no_compression": no_compression, "with_compression": with_compression}
-
-    def run_chat(
-        self,
-        history: list[dict[str, str]],
-        user_message: str,
-        model_id: str,
-        temperature: float,
-        max_tokens: int,
-        context_limit_override: int | None = None,
-        summary: str = "",
-        compression_enabled: bool = False,
-        full_history: list[dict] | None = None,
+        strategy: str,
+        branch: str,
+        full_history: list[dict],
+        effective_history: list[dict],
+        facts_text: str,
+        context_limit_override: int | None,
     ) -> AgentResponse:
-        full = full_history if full_history is not None else history
         current_request_tokens = self._estimate_tokens(user_message)
-        summary_tokens = self._estimate_tokens(summary)
-        history_tokens_effective = self._estimate_history_tokens(history) + summary_tokens
-        history_tokens_full = self._estimate_history_tokens(full)
-        token_savings = max(0, history_tokens_full - history_tokens_effective)
-        context_tokens = current_request_tokens + history_tokens_effective
+        full_history_tokens = self._estimate_history_tokens(full_history)
+        effective_history_tokens = self._estimate_history_tokens(effective_history)
+        facts_tokens = self._estimate_tokens(facts_text)
+        context_tokens = current_request_tokens + effective_history_tokens + facts_tokens
         context_limit = context_limit_override or self._infer_context_limit_tokens(model_id)
 
         if context_tokens + max_tokens > context_limit:
-            return self._from_overflow(
+            return self._overflow_response(
                 model=model_id,
+                strategy=strategy,
+                branch=branch,
                 current_request_tokens=current_request_tokens,
-                history_tokens=history_tokens_effective,
+                full_history_tokens=full_history_tokens,
+                effective_history_tokens=effective_history_tokens,
+                facts_tokens=facts_tokens,
                 context_tokens=context_tokens,
                 context_limit=context_limit,
-                history_tokens_full=history_tokens_full,
-                history_tokens_effective=history_tokens_effective,
-                summary_tokens=summary_tokens,
-                token_savings=token_savings,
-                compression_enabled=compression_enabled,
             )
 
-        prompt = self._build_chat_prompt(history=history, user_message=user_message, summary=summary)
-        return self.run(
-            prompt=prompt,
-            model_id=model_id,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            current_request_tokens=current_request_tokens,
-            history_tokens=history_tokens_effective,
-            context_tokens=context_tokens,
-            context_limit=context_limit,
-            history_tokens_full=history_tokens_full,
-            history_tokens_effective=history_tokens_effective,
-            summary_tokens=summary_tokens,
-            token_savings=token_savings,
-            compression_enabled=compression_enabled,
+        prompt = self._build_chat_prompt(
+            strategy=strategy,
+            history=effective_history,
+            user_message=user_message,
+            facts_text=facts_text,
         )
-
-    def run(
-        self,
-        prompt: str,
-        model_id: str,
-        temperature: float,
-        max_tokens: int,
-        current_request_tokens: int = 0,
-        history_tokens: int = 0,
-        context_tokens: int = 0,
-        context_limit: int = 0,
-        history_tokens_full: int = 0,
-        history_tokens_effective: int = 0,
-        summary_tokens: int = 0,
-        token_savings: int = 0,
-        compression_enabled: bool = False,
-    ) -> AgentResponse:
         started = perf_counter()
         try:
             text, used_model, usage = ask_claude_with_meta(
@@ -238,52 +221,49 @@ class LLMAgent:
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
-            return self._from_success(
-                text=text,
-                model=used_model,
-                usage=usage,
-                started=started,
-                current_request_tokens=current_request_tokens,
-                history_tokens=history_tokens,
-                context_tokens=context_tokens,
-                context_limit=context_limit,
-                history_tokens_full=history_tokens_full,
-                history_tokens_effective=history_tokens_effective,
-                summary_tokens=summary_tokens,
-                token_savings=token_savings,
-                compression_enabled=compression_enabled,
-            )
         except Exception as exc:
-            return self._from_error(
+            return self._error_response(
                 error_text=str(exc),
                 model=model_id,
+                strategy=strategy,
+                branch=branch,
                 started=started,
                 current_request_tokens=current_request_tokens,
-                history_tokens=history_tokens,
+                full_history_tokens=full_history_tokens,
+                effective_history_tokens=effective_history_tokens,
+                facts_tokens=facts_tokens,
                 context_tokens=context_tokens,
                 context_limit=context_limit,
-                history_tokens_full=history_tokens_full,
-                history_tokens_effective=history_tokens_effective,
-                summary_tokens=summary_tokens,
-                token_savings=token_savings,
-                compression_enabled=compression_enabled,
             )
+        return self._success_response(
+            text=text,
+            model=used_model,
+            usage=usage,
+            strategy=strategy,
+            branch=branch,
+            started=started,
+            current_request_tokens=current_request_tokens,
+            full_history_tokens=full_history_tokens,
+            effective_history_tokens=effective_history_tokens,
+            facts_tokens=facts_tokens,
+            context_tokens=context_tokens,
+            context_limit=context_limit,
+        )
 
-    def _from_success(
+    def _success_response(
         self,
         text: str,
         model: str,
         usage: dict,
+        strategy: str,
+        branch: str,
         started: float,
         current_request_tokens: int,
-        history_tokens: int,
+        full_history_tokens: int,
+        effective_history_tokens: int,
+        facts_tokens: int,
         context_tokens: int,
         context_limit: int,
-        history_tokens_full: int,
-        history_tokens_effective: int,
-        summary_tokens: int,
-        token_savings: int,
-        compression_enabled: bool,
     ) -> AgentResponse:
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
@@ -298,54 +278,176 @@ class LLMAgent:
             total_tokens=total_tokens,
             latency_ms=latency_ms,
             cost_text=self._format_cost(cost),
+            strategy=strategy,
+            branch=branch,
             current_request_tokens=current_request_tokens,
-            history_tokens=history_tokens,
+            history_tokens_full=full_history_tokens,
+            history_tokens_effective=effective_history_tokens,
+            facts_tokens=facts_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
             overflowed=False,
-            history_tokens_full=history_tokens_full,
-            history_tokens_effective=history_tokens_effective,
-            summary_tokens=summary_tokens,
-            token_savings=token_savings,
-            compression_enabled=compression_enabled,
         )
 
-    def _from_error(
+    def _error_response(
         self,
         error_text: str,
         model: str,
+        strategy: str,
+        branch: str,
         started: float,
         current_request_tokens: int,
-        history_tokens: int,
+        full_history_tokens: int,
+        effective_history_tokens: int,
+        facts_tokens: int,
         context_tokens: int,
         context_limit: int,
-        history_tokens_full: int,
-        history_tokens_effective: int,
-        summary_tokens: int,
-        token_savings: int,
-        compression_enabled: bool,
     ) -> AgentResponse:
         latency_ms = int((perf_counter() - started) * 1000)
-        friendly_error = self._friendly_error_text(error_text)
         return AgentResponse(
-            text=f"Error: {friendly_error}",
+            text=f"Error: {self._friendly_error_text(error_text)}",
             used_model=model,
             input_tokens=0,
             output_tokens=0,
             total_tokens=0,
             latency_ms=latency_ms,
             cost_text="N/A",
+            strategy=strategy,
+            branch=branch,
             current_request_tokens=current_request_tokens,
-            history_tokens=history_tokens,
+            history_tokens_full=full_history_tokens,
+            history_tokens_effective=effective_history_tokens,
+            facts_tokens=facts_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
             overflowed=False,
-            history_tokens_full=history_tokens_full,
-            history_tokens_effective=history_tokens_effective,
-            summary_tokens=summary_tokens,
-            token_savings=token_savings,
-            compression_enabled=compression_enabled,
         )
+
+    def _overflow_response(
+        self,
+        model: str,
+        strategy: str,
+        branch: str,
+        current_request_tokens: int,
+        full_history_tokens: int,
+        effective_history_tokens: int,
+        facts_tokens: int,
+        context_tokens: int,
+        context_limit: int,
+    ) -> AgentResponse:
+        return AgentResponse(
+            text=(
+                "Error: estimated context exceeds model limit. "
+                "Use smaller window or switch strategy."
+            ),
+            used_model=model,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            latency_ms=0,
+            cost_text="N/A",
+            strategy=strategy,
+            branch=branch,
+            current_request_tokens=current_request_tokens,
+            history_tokens_full=full_history_tokens,
+            history_tokens_effective=effective_history_tokens,
+            facts_tokens=facts_tokens,
+            context_tokens_estimate=context_tokens,
+            context_limit_tokens=context_limit,
+            overflowed=True,
+        )
+
+    def _select_history_for_strategy(self, history: list[dict], strategy: str, window_n: int) -> list[dict]:
+        if strategy in {"sliding", "facts"}:
+            n = max(2, window_n)
+            return history[-n:]
+        return history
+
+    def _build_chat_prompt(
+        self,
+        strategy: str,
+        history: list[dict],
+        user_message: str,
+        facts_text: str,
+    ) -> str:
+        lines = [
+            "You are a helpful assistant in a multi-turn chat.",
+            "Respect existing decisions and constraints from context.",
+            f"Context strategy: {strategy}",
+        ]
+        if facts_text:
+            lines.extend(["", "Sticky facts:", facts_text])
+        lines.extend(["", "Conversation history:"])
+        for item in history:
+            role = item.get("role", "").strip().lower()
+            content = item.get("content", "").strip()
+            if not content:
+                continue
+            speaker = "User" if role == "user" else "Assistant"
+            lines.append(f"{speaker}: {content}")
+        lines.extend(["", f"User: {user_message.strip()}", "Assistant:"])
+        return "\n".join(lines)
+
+    def _update_facts(self, facts: dict[str, str], user_message: str) -> None:
+        text = user_message.strip()
+        if not text:
+            return
+        lowered = text.lower()
+        self._update_fact_if_contains(facts, lowered, text, "goal", ["цель", "goal"])
+        self._update_fact_if_contains(facts, lowered, text, "constraints", ["огранич", "constraint"])
+        self._update_fact_if_contains(facts, lowered, text, "preferences", ["предпоч", "prefer"])
+        self._update_fact_if_contains(facts, lowered, text, "decisions", ["решени", "decision", "договор"])
+        self._update_fact_if_contains(facts, lowered, text, "budget", ["бюджет", "budget"])
+        self._update_fact_if_contains(facts, lowered, text, "kpi", ["kpi", "метрик"])
+        kv_matches = re.findall(r"([A-Za-zА-Яа-я0-9_ ]{2,30})\s*:\s*([^,\n]{2,80})", text)
+        for key, value in kv_matches:
+            normalized = key.strip().lower().replace(" ", "_")
+            if len(normalized) > 30:
+                continue
+            facts[normalized] = value.strip()
+        facts["last_user_intent"] = text[:140]
+        if len(facts) > 15:
+            keys = list(facts.keys())
+            for key in keys[:-15]:
+                facts.pop(key, None)
+
+    def _update_fact_if_contains(
+        self,
+        facts: dict[str, str],
+        lowered: str,
+        original: str,
+        key: str,
+        needles: list[str],
+    ) -> None:
+        if any(needle in lowered for needle in needles):
+            facts[key] = original[:180]
+
+    def _facts_to_text(self, facts: dict[str, str]) -> str:
+        if not facts:
+            return ""
+        lines = [f"- {key}: {value}" for key, value in facts.items()]
+        return "\n".join(lines)
+
+    def _estimate_tokens(self, text: str) -> int:
+        cleaned = text.strip()
+        if not cleaned:
+            return 0
+        return max(1, (len(cleaned) // 4) + 1)
+
+    def _estimate_history_tokens(self, history: list[dict]) -> int:
+        total = 0
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            total += self._estimate_tokens(str(item.get("content", "")))
+            total += 4
+        return total
+
+    def _infer_context_limit_tokens(self, model_id: str) -> int:
+        model = model_id.lower()
+        if "haiku" in model or "sonnet" in model or "opus" in model:
+            return 200_000
+        return 100_000
 
     def _estimate_cost(self, model_id: str, input_tokens: int, output_tokens: int) -> float | None:
         rates = self._infer_rates(model_id)
@@ -377,115 +479,57 @@ class LLMAgent:
             return "LLM provider is temporarily overloaded (529). Please retry in a few seconds."
         return error_text
 
-    def _build_chat_prompt(self, history: list[dict[str, str]], user_message: str, summary: str = "") -> str:
-        lines = [
-            "You are a helpful assistant in a multi-turn chat.",
-            "Use prior conversation as context and answer the latest user message.",
-        ]
-        if summary.strip():
-            lines.append("")
-            lines.append("Conversation summary of earlier messages:")
-            lines.append(summary.strip())
-        lines.append("")
-        lines.append("Recent conversation history:")
-        for item in history:
-            role = item.get("role", "").strip().lower()
-            content = item.get("content", "").strip()
-            if not content:
-                continue
-            speaker = "User" if role == "user" else "Assistant"
-            lines.append(f"{speaker}: {content}")
-        lines.append("")
-        lines.append(f"User: {user_message.strip()}")
-        lines.append("Assistant:")
-        return "\n".join(lines)
-
-    def _estimate_tokens(self, text: str) -> int:
-        cleaned = text.strip()
-        if not cleaned:
-            return 0
-        return max(1, (len(cleaned) // 4) + 1)
-
-    def _estimate_history_tokens(self, history: list[dict]) -> int:
-        total = 0
-        for item in history:
-            if not isinstance(item, dict):
-                continue
-            total += self._estimate_tokens(str(item.get("content", "")))
-            total += 4
-        return total
-
-    def _infer_context_limit_tokens(self, model_id: str) -> int:
-        model = model_id.lower()
-        if "haiku" in model or "sonnet" in model or "opus" in model:
-            return 200_000
-        return 100_000
-
-    def _from_overflow(
-        self,
-        model: str,
-        current_request_tokens: int,
-        history_tokens: int,
-        context_tokens: int,
-        context_limit: int,
-        history_tokens_full: int,
-        history_tokens_effective: int,
-        summary_tokens: int,
-        token_savings: int,
-        compression_enabled: bool,
-    ) -> AgentResponse:
-        return AgentResponse(
-            text=(
-                "Error: estimated context exceeds model limit. "
-                "Clear history, reduce keep_last_n, or shorten messages."
-            ),
-            used_model=model,
-            input_tokens=0,
-            output_tokens=0,
-            total_tokens=0,
-            latency_ms=0,
-            cost_text="N/A",
-            current_request_tokens=current_request_tokens,
-            history_tokens=history_tokens,
-            context_tokens_estimate=context_tokens,
-            context_limit_tokens=context_limit,
-            overflowed=True,
-            history_tokens_full=history_tokens_full,
-            history_tokens_effective=history_tokens_effective,
-            summary_tokens=summary_tokens,
-            token_savings=token_savings,
-            compression_enabled=compression_enabled,
-        )
-
     def _default_state(self) -> dict:
-        return {"summary": "", "recent_messages": [], "all_messages": []}
+        return {
+            "active_branch": "main",
+            "branches": {"main": {"messages": [], "facts": {}, "checkpoints": []}},
+        }
 
     def _load_state(self) -> dict:
-        if not self.history_path.exists():
+        if not self.state_path.exists():
             return self._default_state()
         try:
-            raw = self.history_path.read_text(encoding="utf-8")
+            raw = self.state_path.read_text(encoding="utf-8")
             parsed = json.loads(raw)
         except (OSError, json.JSONDecodeError):
             return self._default_state()
-        if isinstance(parsed, list):
-            normalized = self._normalize_messages(parsed)
-            return {"summary": "", "recent_messages": normalized[-60:], "all_messages": normalized}
         if not isinstance(parsed, dict):
             return self._default_state()
-        summary = str(parsed.get("summary", "")).strip()
-        recent = self._normalize_messages(parsed.get("recent_messages", []))
-        all_messages = self._normalize_messages(parsed.get("all_messages", []))
-        if not all_messages and recent:
-            all_messages = list(recent)
-        if not recent and all_messages:
-            recent = all_messages[-60:]
-        return {"summary": summary, "recent_messages": recent, "all_messages": all_messages}
+        active = str(parsed.get("active_branch", "main")).strip() or "main"
+        branches = parsed.get("branches", {})
+        if not isinstance(branches, dict):
+            return self._default_state()
+        normalized_branches: dict[str, dict] = {}
+        for name, branch in branches.items():
+            if not isinstance(name, str) or not isinstance(branch, dict):
+                continue
+            messages = self._normalize_messages(branch.get("messages", []))
+            facts = self._normalize_facts(branch.get("facts", {}))
+            checkpoints = self._normalize_checkpoints(branch.get("checkpoints", []), len(messages))
+            normalized_branches[name] = {
+                "messages": messages[-220:],
+                "facts": facts,
+                "checkpoints": checkpoints[-40:],
+            }
+        if not normalized_branches:
+            return self._default_state()
+        if active not in normalized_branches:
+            active = sorted(normalized_branches.keys())[0]
+        return {"active_branch": active, "branches": normalized_branches}
+
+    def _save_state(self, state: dict) -> None:
+        payload = json.dumps(state, ensure_ascii=False, indent=2)
+        self.state_path.write_text(payload, encoding="utf-8")
+
+    def _get_branch(self, state: dict, branch_id: str) -> dict:
+        if branch_id not in state["branches"]:
+            state["branches"][branch_id] = {"messages": [], "facts": {}, "checkpoints": []}
+        return state["branches"][branch_id]
 
     def _normalize_messages(self, messages: object) -> list[dict]:
         if not isinstance(messages, list):
             return []
-        normalized: list[dict] = []
+        result: list[dict] = []
         for item in messages:
             if not isinstance(item, dict):
                 continue
@@ -493,62 +537,38 @@ class LLMAgent:
             content = str(item.get("content", "")).strip()
             if role not in {"user", "assistant"} or not content:
                 continue
-            out = {"role": role, "content": content}
+            normalized = {"role": role, "content": content}
             meta = item.get("meta")
             if isinstance(meta, dict):
-                out["meta"] = meta
-            normalized.append(out)
-        return normalized
+                normalized["meta"] = meta
+            result.append(normalized)
+        return result
 
-    def _save_state(self, state: dict) -> None:
-        payload = json.dumps(state, ensure_ascii=False, indent=2)
-        self.history_path.write_text(payload, encoding="utf-8")
+    def _normalize_facts(self, facts: object) -> dict[str, str]:
+        if not isinstance(facts, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key, value in facts.items():
+            k = str(key).strip()
+            v = str(value).strip()
+            if not k or not v:
+                continue
+            out[k[:32]] = v[:200]
+        return out
 
-    def _compress_recent_messages(
-        self,
-        summary: str,
-        recent_messages: list[dict],
-        model_id: str,
-        keep_last_n: int,
-        summarize_every_n: int,
-    ) -> tuple[str, list[dict]]:
-        keep = max(2, keep_last_n)
-        step = max(2, summarize_every_n)
-        if len(recent_messages) <= keep:
-            return summary, recent_messages
-        compressed_summary = summary
-        remaining = list(recent_messages)
-        while len(remaining) > keep + step:
-            chunk = remaining[:step]
-            compressed_summary = self._merge_summary(compressed_summary, chunk, model_id)
-            remaining = remaining[step:]
-        return compressed_summary, remaining
-
-    def _merge_summary(self, current_summary: str, chunk: list[dict], model_id: str) -> str:
-        chunk_lines: list[str] = []
-        for item in chunk:
-            role = item.get("role", "")
-            prefix = "User" if role == "user" else "Assistant"
-            chunk_lines.append(f"{prefix}: {item.get('content', '')}")
-        chunk_text = "\n".join(chunk_lines)
-        prompt = (
-            "Update conversation summary. Keep key facts, decisions, and constraints. "
-            "Use concise bullet points in plain text.\n\n"
-            f"Current summary:\n{current_summary or '(empty)'}\n\n"
-            f"New messages:\n{chunk_text}\n\n"
-            "Return only updated summary."
-        )
-        try:
-            text, _, _ = ask_claude_with_meta(
-                prompt=prompt,
-                model_override=model_id,
-                temperature=0.0,
-                max_tokens=220,
-            )
-            candidate = text.strip()
-            if candidate:
-                return candidate
-        except Exception:
-            pass
-        fallback = f"{current_summary}\n- {chunk_text[:220]}".strip()
-        return fallback[:4000]
+    def _normalize_checkpoints(self, checkpoints: object, max_messages: int) -> list[dict]:
+        if not isinstance(checkpoints, list):
+            return []
+        out: list[dict] = []
+        for item in checkpoints:
+            if not isinstance(item, dict):
+                continue
+            cid = str(item.get("id", "")).strip()
+            label = str(item.get("label", "")).strip() or cid
+            idx_raw = item.get("message_index", 0)
+            idx = int(idx_raw) if isinstance(idx_raw, int) else 0
+            idx = max(0, min(idx, max_messages))
+            if not cid:
+                continue
+            out.append({"id": cid, "label": label[:60], "message_index": idx})
+        return out
