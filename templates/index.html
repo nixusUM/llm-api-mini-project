@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Day 10 - Context Strategies</title>
+  <title>Day 11 - Memory Layers</title>
   <style>
     :root {
       --bg: #0b1220;
@@ -108,6 +108,18 @@
       outline: none;
     }
     .field { margin-bottom: 10px; }
+    .inline-check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+    .inline-check input {
+      width: auto;
+      margin: 0;
+    }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
     button {
       border: 1px solid var(--border);
@@ -249,8 +261,8 @@
   <div class="container">
     <div class="header">
       <div>
-        <h1>Day 10 - Context Strategies (No Summary Compression)</h1>
-        <div class="sub">Sliding Window / Sticky Facts / Branching with branch controls and A/B compare.</div>
+        <h1>Day 11 - Assistant Memory Layers</h1>
+        <div class="sub">Short-term dialog + Working memory + Long-term memory with explicit save controls.</div>
         {% if status %}
         <div class="status status-global">{{ status }}</div>
         {% endif %}
@@ -294,6 +306,33 @@
             <label for="context_limit">Context limit tokens (demo)</label>
             <input id="context_limit" name="context_limit" value="{{ context_limit }}">
           </div>
+          <label class="inline-check">
+            <input type="checkbox" name="include_memory_layers" {% if include_memory_layers %}checked{% endif %}>
+            Use memory layers in prompt
+          </label>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Memory Controls</h2>
+          <div class="field">
+            <label for="memory_layer">Target layer</label>
+            <select id="memory_layer" name="memory_layer">
+              <option value="working" {% if memory_layer == "working" %}selected{% endif %}>Working memory</option>
+              <option value="long_term" {% if memory_layer == "long_term" %}selected{% endif %}>Long-term memory</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="memory_key">Memory key</label>
+            <input id="memory_key" name="memory_key" value="{{ memory_key }}" placeholder="e.g. project_goal">
+          </div>
+          <div class="field">
+            <label for="memory_value">Memory value</label>
+            <input id="memory_value" name="memory_value" value="{{ memory_value }}" placeholder="e.g. Reach 1500 MAU in month 1">
+          </div>
+          <div class="actions">
+            <button type="submit" name="action" value="save_memory" formnovalidate>Save memory</button>
+            <button type="submit" name="action" value="delete_memory" formnovalidate>Delete key</button>
+          </div>
         </div>
 
         <div class="panel">
@@ -305,7 +344,7 @@
             <label for="selected_branch">Branch</label>
             <select id="selected_branch" name="selected_branch">
               {% for branch in branches %}
-              <option value="{{ branch }}" {% if branch == active_branch %}selected{% endif %}>{{ branch }}</option>
+              <option value="{{ branch }}" {% if branch == selected_branch %}selected{% endif %}>{{ branch }}</option>
               {% endfor %}
             </select>
           </div>
@@ -363,6 +402,7 @@
               <span class="btn-spinner" aria-hidden="true"></span>
               <span class="btn-label">Send message</span>
             </button>
+            <button type="submit" name="action" value="compare_memory">Compare memory ON/OFF</button>
             <button type="submit" name="action" value="compare_strategies">Compare 3 strategies</button>
           </div>
         </div>
@@ -370,9 +410,27 @@
 
       <aside class="stack">
         <div class="panel">
-          <h2 class="title">Sticky Facts (active branch)</h2>
+          <h2 class="title">Short-term Memory (active window)</h2>
+          <ul class="cp-list">
+            {% for item in short_term_memory %}
+            <li><strong>{{ item.role }}</strong>: {{ item.content }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Working Memory (task layer)</h2>
           <ul class="facts-list">
-            {% for key, value in facts.items() %}
+            {% for key, value in working_memory.items() %}
+            <li><strong>{{ key }}</strong>: {{ value }}</li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Long-term Memory (assistant layer)</h2>
+          <ul class="facts-list">
+            {% for key, value in long_term_memory.items() %}
             <li><strong>{{ key }}</strong>: {{ value }}</li>
             {% endfor %}
           </ul>
@@ -398,7 +456,8 @@
             Total tokens: <strong>{{ result.total_tokens }}</strong><br>
             Request tokens: <strong>{{ result.current_request_tokens }}</strong><br>
             History full/effective: <strong>{{ result.history_tokens_full }}/{{ result.history_tokens_effective }}</strong><br>
-            Facts tokens: <strong>{{ result.facts_tokens }}</strong><br>
+            Working/Long-term tokens: <strong>{{ result.working_tokens }}/{{ result.long_term_tokens }}</strong><br>
+            Memory layers used: <strong>{{ "yes" if result.include_memory_layers else "no" }}</strong><br>
             Context estimate: <strong>{{ result.context_tokens_estimate }}/{{ result.context_limit_tokens }}</strong><br>
             Cost: <strong>{{ result.cost_text }}</strong>
           </div>
@@ -406,24 +465,24 @@
         {% endif %}
 
         <div class="panel">
-          <h2 class="title">How to Verify Day 10</h2>
+          <h2 class="title">How to Verify Day 11</h2>
           <div class="hint">
-            1) Run same 10-15 message scenario in each strategy.<br>
-            2) Sliding: watch important details drop after window.<br>
-            3) Facts: verify key facts persist with lower effective history.<br>
-            4) Branching: create checkpoint + 2 branches and diverge decisions.<br>
-            5) Compare quality, stability, tokens and usability.
+            1) Save 3-4 keys to Working memory for active branch.<br>
+            2) Save 2-3 profile keys to Long-term memory.<br>
+            3) Send prompt with memory ON and inspect answer details.<br>
+            4) Run Compare memory ON/OFF for same prompt.<br>
+            5) Check what appears in short-term / working / long-term panels.
           </div>
         </div>
 
         <div class="panel">
           <h2 class="title">Demo Prompts</h2>
           <div class="hint">
-            1) "Собираем ТЗ: продукт - LinguaSprint, цель - 1500 MAU, бюджет - 20k."<br>
-            2) "Добавь ограничения: срок 3 недели, команда 2 человека."<br>
-            3) "Сделай вариант A архитектуры и риски."<br>
-            4) "Сохрани checkpoint и сделай ветку option_b."<br>
-            5) "В ветке option_b предложи другой план и сравни с A."
+            1) "Сделай план запуска продукта с учетом всех сохраненных ограничений."<br>
+            2) "Сравни рекомендации для моего профиля и прошлых решений."<br>
+            3) "Какие риски критичны именно для текущей задачи?"<br>
+            4) "Предложи вариант, не нарушающий budget и deadline из памяти."<br>
+            5) "Сначала перечисли, какие данные из памяти ты использовал."
           </div>
         </div>
 
@@ -438,7 +497,8 @@
                   <th>Req</th>
                   <th>HistFull</th>
                   <th>HistEff</th>
-                  <th>Facts</th>
+                  <th>Working</th>
+                  <th>Long-term</th>
                   <th>Resp</th>
                   <th>Total</th>
                   <th>Cum</th>
@@ -452,7 +512,8 @@
                   <td>{{ row.req }}</td>
                   <td>{{ row.hist_full }}</td>
                   <td>{{ row.hist_effective }}</td>
-                  <td>{{ row.facts_tokens }}</td>
+                  <td>{{ row.working_tokens }}</td>
+                  <td>{{ row.long_term_tokens }}</td>
                   <td>{{ row.resp }}</td>
                   <td>{{ row.total }}</td>
                   <td>{{ row.cumulative }}</td>
@@ -472,12 +533,36 @@
               <strong>{{ st }}</strong><br>
               Context: {{ res.context_tokens_estimate }}/{{ res.context_limit_tokens }}<br>
               Hist full/effective: {{ res.history_tokens_full }}/{{ res.history_tokens_effective }}<br>
-              Facts tokens: {{ res.facts_tokens }}<br>
+              Working/Long-term: {{ res.working_tokens }}/{{ res.long_term_tokens }}<br>
               Output tokens: {{ res.output_tokens }}<br>
               Cost: {{ res.cost_text }}<br><br>
               {{ res.text }}
             </div>
             {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% if compare_memory_result %}
+        <div class="panel" id="compare-memory-panel">
+          <h2 class="title">Memory Layers Compare (same prompt)</h2>
+          <div class="ab-grid">
+            <div class="ab-card">
+              <strong>with_memory</strong><br>
+              Context: {{ compare_memory_result.with_memory.context_tokens_estimate }}/{{ compare_memory_result.with_memory.context_limit_tokens }}<br>
+              Working/Long-term: {{ compare_memory_result.with_memory.working_tokens }}/{{ compare_memory_result.with_memory.long_term_tokens }}<br>
+              Output tokens: {{ compare_memory_result.with_memory.output_tokens }}<br>
+              Cost: {{ compare_memory_result.with_memory.cost_text }}<br><br>
+              {{ compare_memory_result.with_memory.text }}
+            </div>
+            <div class="ab-card">
+              <strong>without_memory</strong><br>
+              Context: {{ compare_memory_result.without_memory.context_tokens_estimate }}/{{ compare_memory_result.without_memory.context_limit_tokens }}<br>
+              Working/Long-term: {{ compare_memory_result.without_memory.working_tokens }}/{{ compare_memory_result.without_memory.long_term_tokens }}<br>
+              Output tokens: {{ compare_memory_result.without_memory.output_tokens }}<br>
+              Cost: {{ compare_memory_result.without_memory.cost_text }}<br><br>
+              {{ compare_memory_result.without_memory.text }}
+            </div>
           </div>
         </div>
         {% endif %}
@@ -493,8 +578,13 @@
 
     if (chatWindow) chatWindow.scrollTop = chatWindow.scrollHeight;
 
+    var compareMemoryPanel = document.getElementById("compare-memory-panel");
     var comparePanel = document.getElementById("compare-result-panel");
-    if (comparePanel) comparePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (compareMemoryPanel) {
+      compareMemoryPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (comparePanel) {
+      comparePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
 
     form.addEventListener("submit", (event) => {
       const action = event.submitter ? event.submitter.value : "send";

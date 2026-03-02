@@ -57,8 +57,11 @@ def as_result_view(response) -> dict:
         "history_tokens_full": response.history_tokens_full,
         "history_tokens_effective": response.history_tokens_effective,
         "facts_tokens": response.facts_tokens,
+        "working_tokens": response.working_tokens,
+        "long_term_tokens": response.long_term_tokens,
         "context_tokens_estimate": response.context_tokens_estimate,
         "context_limit_tokens": response.context_limit_tokens,
+        "include_memory_layers": response.include_memory_layers,
         "overflowed": response.overflowed,
     }
 
@@ -77,8 +80,10 @@ def build_token_growth(history: list[dict]) -> list[dict]:
         full_hist = int(meta.get("history_tokens_full", 0) or 0)
         eff_hist = int(meta.get("history_tokens_effective", 0) or 0)
         facts_tokens = int(meta.get("facts_tokens", 0) or 0)
+        working_tokens = int(meta.get("working_tokens", facts_tokens) or 0)
+        long_term_tokens = int(meta.get("long_term_tokens", 0) or 0)
         resp = int(meta.get("response_tokens", 0) or 0)
-        total_turn = int(meta.get("total_turn_tokens", req + eff_hist + resp))
+        total_turn = int(meta.get("total_turn_tokens", req + eff_hist + working_tokens + long_term_tokens + resp))
         cumulative += total_turn
         rows.append(
             {
@@ -87,7 +92,8 @@ def build_token_growth(history: list[dict]) -> list[dict]:
                 "req": req,
                 "hist_full": full_hist,
                 "hist_effective": eff_hist,
-                "facts_tokens": facts_tokens,
+                "working_tokens": working_tokens,
+                "long_term_tokens": long_term_tokens,
                 "resp": resp,
                 "total": total_turn,
                 "cumulative": cumulative,
@@ -115,17 +121,25 @@ def index():
     max_tokens = "600"
     context_limit = "200000"
     window_n = "8"
+    include_memory_layers = True
+    memory_layer = "working"
+    memory_key = ""
+    memory_value = ""
     checkpoint_label = ""
     new_branch_name = ""
     source_checkpoint_id = ""
     status = ""
     result = {}
     compare_result = {}
+    compare_memory_result = {}
 
     active_branch = agent.get_active_branch()
+    selected_branch = active_branch
     branches = agent.list_branches()
     history = agent.load_history(active_branch)
-    facts = agent.load_facts(active_branch)
+    short_term_memory = agent.short_term_memory(parse_window(window_n, 8), active_branch)
+    working_memory = agent.load_working_memory(active_branch)
+    long_term_memory = agent.load_long_term_memory()
     checkpoints = agent.list_checkpoints(active_branch)
     token_growth = build_token_growth(history)
     state_path = str(agent.state_path)
@@ -143,6 +157,10 @@ def index():
         max_tokens = request.form.get("max_tokens", "600").strip()
         context_limit = request.form.get("context_limit", "200000").strip()
         window_n = request.form.get("window_n", "8").strip()
+        include_memory_layers = request.form.get("include_memory_layers", "") == "on"
+        memory_layer = request.form.get("memory_layer", "working").strip().lower()
+        memory_key = request.form.get("memory_key", "").strip()
+        memory_value = request.form.get("memory_value", "").strip()
         checkpoint_label = request.form.get("checkpoint_label", "").strip()
         new_branch_name = request.form.get("new_branch_name", "").strip()
         source_checkpoint_id = request.form.get("source_checkpoint_id", "").strip()
@@ -156,6 +174,21 @@ def index():
         if action == "clear_all":
             agent.clear_all()
             status = "All branches and history cleared."
+        elif action == "save_memory":
+            ok, message = agent.set_memory_item(
+                layer=memory_layer,
+                key=memory_key,
+                value=memory_value,
+                branch_id=selected_branch,
+            )
+            status = message if ok else f"Save memory failed: {message}"
+        elif action == "delete_memory":
+            ok, message = agent.delete_memory_item(
+                layer=memory_layer,
+                key=memory_key,
+                branch_id=selected_branch,
+            )
+            status = message if ok else f"Delete memory failed: {message}"
         elif action == "switch_branch":
             if agent.switch_branch(selected_branch):
                 status = f"Switched to branch: {selected_branch}"
@@ -184,11 +217,43 @@ def index():
                         window_n=parsed_window,
                         branch_id=selected_branch,
                         context_limit_override=parsed_context_limit,
+                        include_memory_layers=include_memory_layers,
                     )
                     compared[strat] = as_result_view(response)
                 compare_result = compared
                 status = "Compared all strategies on the same prompt."
                 prompt = ""
+            else:
+                status = "Prompt is empty."
+        elif action == "compare_memory":
+            if prompt:
+                with_memory = agent.run_chat_preview(
+                    user_message=prompt,
+                    model_id=selected_model,
+                    temperature=parsed_temp,
+                    max_tokens=parsed_max_tokens,
+                    strategy=strategy,
+                    window_n=parsed_window,
+                    branch_id=selected_branch,
+                    context_limit_override=parsed_context_limit,
+                    include_memory_layers=True,
+                )
+                without_memory = agent.run_chat_preview(
+                    user_message=prompt,
+                    model_id=selected_model,
+                    temperature=parsed_temp,
+                    max_tokens=parsed_max_tokens,
+                    strategy=strategy,
+                    window_n=parsed_window,
+                    branch_id=selected_branch,
+                    context_limit_override=parsed_context_limit,
+                    include_memory_layers=False,
+                )
+                compare_memory_result = {
+                    "with_memory": as_result_view(with_memory),
+                    "without_memory": as_result_view(without_memory),
+                }
+                status = "Compared the same prompt with memory layers ON/OFF."
             else:
                 status = "Prompt is empty."
         elif action == "send":
@@ -202,6 +267,7 @@ def index():
                     window_n=parsed_window,
                     branch_id=selected_branch,
                     context_limit_override=parsed_context_limit,
+                    include_memory_layers=include_memory_layers,
                 )
                 result = as_result_view(response)
                 prompt = ""
@@ -211,7 +277,9 @@ def index():
         active_branch = agent.get_active_branch()
         branches = agent.list_branches()
         history = agent.load_history(active_branch)
-        facts = agent.load_facts(active_branch)
+        short_term_memory = agent.short_term_memory(parsed_window, active_branch)
+        working_memory = agent.load_working_memory(active_branch)
+        long_term_memory = agent.load_long_term_memory()
         checkpoints = agent.list_checkpoints(active_branch)
         token_growth = build_token_growth(history)
         if active_branch not in branches and branches:
@@ -228,15 +296,23 @@ def index():
         max_tokens=max_tokens,
         context_limit=context_limit,
         window_n=window_n,
+        include_memory_layers=include_memory_layers,
+        memory_layer=memory_layer,
+        memory_key=memory_key,
+        memory_value=memory_value,
         checkpoint_label=checkpoint_label,
         new_branch_name=new_branch_name,
         source_checkpoint_id=source_checkpoint_id,
         status=status,
         result=result,
         compare_result=compare_result,
+        compare_memory_result=compare_memory_result,
         active_branch=active_branch,
+        selected_branch=selected_branch,
         branches=branches,
-        facts=facts,
+        short_term_memory=short_term_memory,
+        working_memory=working_memory,
+        long_term_memory=long_term_memory,
         checkpoints=checkpoints,
         history=history,
         token_growth=token_growth,

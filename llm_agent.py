@@ -22,8 +22,11 @@ class AgentResponse:
     history_tokens_full: int
     history_tokens_effective: int
     facts_tokens: int
+    working_tokens: int
+    long_term_tokens: int
     context_tokens_estimate: int
     context_limit_tokens: int
+    include_memory_layers: bool
     overflowed: bool
 
 
@@ -34,20 +37,29 @@ class LLMAgent:
 
     def load_history(self, branch_id: str | None = None) -> list[dict]:
         state = self._load_state()
-        active = branch_id or state["active_branch"]
-        branch = self._get_branch(state, active)
+        branch = self._get_branch(state, branch_id or state["active_branch"])
         return list(branch["messages"])
 
     def load_facts(self, branch_id: str | None = None) -> dict[str, str]:
+        return self.load_working_memory(branch_id)
+
+    def load_working_memory(self, branch_id: str | None = None) -> dict[str, str]:
         state = self._load_state()
-        active = branch_id or state["active_branch"]
-        branch = self._get_branch(state, active)
-        return dict(branch["facts"])
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        return dict(branch["working_memory"])
+
+    def load_long_term_memory(self) -> dict[str, str]:
+        state = self._load_state()
+        return dict(state["long_term_memory"])
+
+    def short_term_memory(self, window_n: int = 8, branch_id: str | None = None) -> list[dict]:
+        history = self.load_history(branch_id)
+        n = max(2, window_n)
+        return history[-n:]
 
     def list_checkpoints(self, branch_id: str | None = None) -> list[dict]:
         state = self._load_state()
-        active = branch_id or state["active_branch"]
-        branch = self._get_branch(state, active)
+        branch = self._get_branch(state, branch_id or state["active_branch"])
         return list(branch["checkpoints"])
 
     def list_branches(self) -> list[str]:
@@ -71,11 +83,7 @@ class LLMAgent:
         branch = self._get_branch(state, active)
         checkpoint_id = f"cp_{len(branch['checkpoints']) + 1}"
         branch["checkpoints"].append(
-            {
-                "id": checkpoint_id,
-                "label": label.strip() or checkpoint_id,
-                "message_index": len(branch["messages"]),
-            }
+            {"id": checkpoint_id, "label": label.strip() or checkpoint_id, "message_index": len(branch["messages"])}
         )
         self._save_state(state)
         return checkpoint_id
@@ -96,21 +104,109 @@ class LLMAgent:
         idx = int(checkpoint["message_index"])
         state["branches"][new_branch] = {
             "messages": list(source["messages"][:idx]),
-            "facts": dict(source["facts"]),
+            "working_memory": dict(source["working_memory"]),
             "checkpoints": [],
         }
         state["active_branch"] = new_branch
         self._save_state(state)
         return True, "Branch created."
 
+    def set_memory_item(
+        self,
+        layer: str,
+        key: str,
+        value: str,
+        branch_id: str | None = None,
+    ) -> tuple[bool, str]:
+        memory_key = self._normalize_memory_key(key)
+        memory_value = value.strip()[:200]
+        if not memory_key:
+            return False, "Memory key is empty."
+        if not memory_value:
+            return False, "Memory value is empty."
+        state = self._load_state()
+        if layer == "working":
+            branch = self._get_branch(state, branch_id or state["active_branch"])
+            branch["working_memory"][memory_key] = memory_value
+            self._trim_memory(branch["working_memory"], 40)
+            self._save_state(state)
+            return True, f"Saved to working memory: {memory_key}"
+        if layer == "long_term":
+            state["long_term_memory"][memory_key] = memory_value
+            self._trim_memory(state["long_term_memory"], 80)
+            self._save_state(state)
+            return True, f"Saved to long-term memory: {memory_key}"
+        return False, f"Unknown memory layer: {layer}"
+
+    def delete_memory_item(
+        self,
+        layer: str,
+        key: str,
+        branch_id: str | None = None,
+    ) -> tuple[bool, str]:
+        memory_key = self._normalize_memory_key(key)
+        if not memory_key:
+            return False, "Memory key is empty."
+        state = self._load_state()
+        if layer == "working":
+            branch = self._get_branch(state, branch_id or state["active_branch"])
+            if memory_key not in branch["working_memory"]:
+                return False, f"Working memory key not found: {memory_key}"
+            branch["working_memory"].pop(memory_key, None)
+            self._save_state(state)
+            return True, f"Deleted from working memory: {memory_key}"
+        if layer == "long_term":
+            if memory_key not in state["long_term_memory"]:
+                return False, f"Long-term memory key not found: {memory_key}"
+            state["long_term_memory"].pop(memory_key, None)
+            self._save_state(state)
+            return True, f"Deleted from long-term memory: {memory_key}"
+        return False, f"Unknown memory layer: {layer}"
+
     def clear_branch(self, branch_id: str | None = None) -> None:
         state = self._load_state()
         active = branch_id or state["active_branch"]
-        state["branches"][active] = {"messages": [], "facts": {}, "checkpoints": []}
+        state["branches"][active] = self._empty_branch()
         self._save_state(state)
 
     def clear_all(self) -> None:
         self._save_state(self._default_state())
+
+    def run_chat_preview(
+        self,
+        user_message: str,
+        model_id: str,
+        temperature: float,
+        max_tokens: int,
+        strategy: str,
+        window_n: int,
+        branch_id: str | None = None,
+        context_limit_override: int | None = None,
+        include_memory_layers: bool = True,
+    ) -> AgentResponse:
+        state = self._load_state()
+        active = branch_id or state["active_branch"]
+        branch = self._get_branch(state, active)
+        working_memory = dict(branch["working_memory"])
+        if strategy == "facts":
+            self._update_facts(working_memory, user_message)
+        full_history = list(branch["messages"])
+        effective_history = self._select_history_for_strategy(full_history, strategy, window_n)
+        long_term = dict(state["long_term_memory"])
+        return self._run_with_context(
+            user_message=user_message,
+            model_id=model_id,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            strategy=strategy,
+            branch=active,
+            full_history=full_history,
+            effective_history=effective_history,
+            working_memory=working_memory if include_memory_layers else {},
+            long_term_memory=long_term if include_memory_layers else {},
+            context_limit_override=context_limit_override,
+            include_memory_layers=include_memory_layers,
+        )
 
     def run_chat_persistent(
         self,
@@ -122,21 +218,16 @@ class LLMAgent:
         window_n: int,
         branch_id: str | None = None,
         context_limit_override: int | None = None,
+        include_memory_layers: bool = True,
     ) -> AgentResponse:
         state = self._load_state()
         active = branch_id or state["active_branch"]
-        if active not in state["branches"]:
-            state["branches"][active] = {"messages": [], "facts": {}, "checkpoints": []}
         state["active_branch"] = active
         branch = self._get_branch(state, active)
-
         if strategy == "facts":
-            self._update_facts(branch["facts"], user_message)
-
+            self._update_facts(branch["working_memory"], user_message)
         full_history = list(branch["messages"])
         effective_history = self._select_history_for_strategy(full_history, strategy, window_n)
-        facts_text = self._facts_to_text(branch["facts"]) if strategy == "facts" else ""
-
         response = self._run_with_context(
             user_message=user_message,
             model_id=model_id,
@@ -146,10 +237,11 @@ class LLMAgent:
             branch=active,
             full_history=full_history,
             effective_history=effective_history,
-            facts_text=facts_text,
+            working_memory=branch["working_memory"] if include_memory_layers else {},
+            long_term_memory=state["long_term_memory"] if include_memory_layers else {},
             context_limit_override=context_limit_override,
+            include_memory_layers=include_memory_layers,
         )
-
         branch["messages"].append({"role": "user", "content": user_message.strip()})
         branch["messages"].append(
             {
@@ -161,10 +253,14 @@ class LLMAgent:
                     "history_tokens_full": response.history_tokens_full,
                     "history_tokens_effective": response.history_tokens_effective,
                     "facts_tokens": response.facts_tokens,
+                    "working_tokens": response.working_tokens,
+                    "long_term_tokens": response.long_term_tokens,
                     "response_tokens": response.output_tokens,
                     "total_turn_tokens": (
                         response.current_request_tokens
                         + response.history_tokens_effective
+                        + response.working_tokens
+                        + response.long_term_tokens
                         + response.output_tokens
                     ),
                 },
@@ -184,16 +280,20 @@ class LLMAgent:
         branch: str,
         full_history: list[dict],
         effective_history: list[dict],
-        facts_text: str,
+        working_memory: dict[str, str],
+        long_term_memory: dict[str, str],
         context_limit_override: int | None,
+        include_memory_layers: bool,
     ) -> AgentResponse:
         current_request_tokens = self._estimate_tokens(user_message)
         full_history_tokens = self._estimate_history_tokens(full_history)
         effective_history_tokens = self._estimate_history_tokens(effective_history)
-        facts_tokens = self._estimate_tokens(facts_text)
-        context_tokens = current_request_tokens + effective_history_tokens + facts_tokens
+        working_text = self._memory_to_text(working_memory)
+        long_term_text = self._memory_to_text(long_term_memory)
+        working_tokens = self._estimate_tokens(working_text)
+        long_term_tokens = self._estimate_tokens(long_term_text)
+        context_tokens = current_request_tokens + effective_history_tokens + working_tokens + long_term_tokens
         context_limit = context_limit_override or self._infer_context_limit_tokens(model_id)
-
         if context_tokens + max_tokens > context_limit:
             return self._overflow_response(
                 model=model_id,
@@ -202,16 +302,19 @@ class LLMAgent:
                 current_request_tokens=current_request_tokens,
                 full_history_tokens=full_history_tokens,
                 effective_history_tokens=effective_history_tokens,
-                facts_tokens=facts_tokens,
+                working_tokens=working_tokens,
+                long_term_tokens=long_term_tokens,
                 context_tokens=context_tokens,
                 context_limit=context_limit,
+                include_memory_layers=include_memory_layers,
             )
-
         prompt = self._build_chat_prompt(
             strategy=strategy,
             history=effective_history,
             user_message=user_message,
-            facts_text=facts_text,
+            working_memory_text=working_text,
+            long_term_memory_text=long_term_text,
+            include_memory_layers=include_memory_layers,
         )
         started = perf_counter()
         try:
@@ -231,9 +334,11 @@ class LLMAgent:
                 current_request_tokens=current_request_tokens,
                 full_history_tokens=full_history_tokens,
                 effective_history_tokens=effective_history_tokens,
-                facts_tokens=facts_tokens,
+                working_tokens=working_tokens,
+                long_term_tokens=long_term_tokens,
                 context_tokens=context_tokens,
                 context_limit=context_limit,
+                include_memory_layers=include_memory_layers,
             )
         return self._success_response(
             text=text,
@@ -245,9 +350,11 @@ class LLMAgent:
             current_request_tokens=current_request_tokens,
             full_history_tokens=full_history_tokens,
             effective_history_tokens=effective_history_tokens,
-            facts_tokens=facts_tokens,
+            working_tokens=working_tokens,
+            long_term_tokens=long_term_tokens,
             context_tokens=context_tokens,
             context_limit=context_limit,
+            include_memory_layers=include_memory_layers,
         )
 
     def _success_response(
@@ -261,9 +368,11 @@ class LLMAgent:
         current_request_tokens: int,
         full_history_tokens: int,
         effective_history_tokens: int,
-        facts_tokens: int,
+        working_tokens: int,
+        long_term_tokens: int,
         context_tokens: int,
         context_limit: int,
+        include_memory_layers: bool,
     ) -> AgentResponse:
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
@@ -283,9 +392,12 @@ class LLMAgent:
             current_request_tokens=current_request_tokens,
             history_tokens_full=full_history_tokens,
             history_tokens_effective=effective_history_tokens,
-            facts_tokens=facts_tokens,
+            facts_tokens=working_tokens,
+            working_tokens=working_tokens,
+            long_term_tokens=long_term_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
+            include_memory_layers=include_memory_layers,
             overflowed=False,
         )
 
@@ -299,9 +411,11 @@ class LLMAgent:
         current_request_tokens: int,
         full_history_tokens: int,
         effective_history_tokens: int,
-        facts_tokens: int,
+        working_tokens: int,
+        long_term_tokens: int,
         context_tokens: int,
         context_limit: int,
+        include_memory_layers: bool,
     ) -> AgentResponse:
         latency_ms = int((perf_counter() - started) * 1000)
         return AgentResponse(
@@ -317,9 +431,12 @@ class LLMAgent:
             current_request_tokens=current_request_tokens,
             history_tokens_full=full_history_tokens,
             history_tokens_effective=effective_history_tokens,
-            facts_tokens=facts_tokens,
+            facts_tokens=working_tokens,
+            working_tokens=working_tokens,
+            long_term_tokens=long_term_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
+            include_memory_layers=include_memory_layers,
             overflowed=False,
         )
 
@@ -331,15 +448,14 @@ class LLMAgent:
         current_request_tokens: int,
         full_history_tokens: int,
         effective_history_tokens: int,
-        facts_tokens: int,
+        working_tokens: int,
+        long_term_tokens: int,
         context_tokens: int,
         context_limit: int,
+        include_memory_layers: bool,
     ) -> AgentResponse:
         return AgentResponse(
-            text=(
-                "Error: estimated context exceeds model limit. "
-                "Use smaller window or switch strategy."
-            ),
+            text="Error: estimated context exceeds model limit. Use smaller window or reduce memory.",
             used_model=model,
             input_tokens=0,
             output_tokens=0,
@@ -351,9 +467,12 @@ class LLMAgent:
             current_request_tokens=current_request_tokens,
             history_tokens_full=full_history_tokens,
             history_tokens_effective=effective_history_tokens,
-            facts_tokens=facts_tokens,
+            facts_tokens=working_tokens,
+            working_tokens=working_tokens,
+            long_term_tokens=long_term_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
+            include_memory_layers=include_memory_layers,
             overflowed=True,
         )
 
@@ -368,16 +487,20 @@ class LLMAgent:
         strategy: str,
         history: list[dict],
         user_message: str,
-        facts_text: str,
+        working_memory_text: str,
+        long_term_memory_text: str,
+        include_memory_layers: bool,
     ) -> str:
         lines = [
             "You are a helpful assistant in a multi-turn chat.",
             "Respect existing decisions and constraints from context.",
             f"Context strategy: {strategy}",
+            f"Memory layers enabled: {'yes' if include_memory_layers else 'no'}",
         ]
-        if facts_text:
-            lines.extend(["", "Sticky facts:", facts_text])
-        lines.extend(["", "Conversation history:"])
+        if include_memory_layers:
+            lines.extend(["", "Working memory (current task):", working_memory_text or "- empty"])
+            lines.extend(["", "Long-term memory (profile/knowledge):", long_term_memory_text or "- empty"])
+        lines.extend(["", "Conversation history (short-term):"])
         for item in history:
             role = item.get("role", "").strip().lower()
             content = item.get("content", "").strip()
@@ -401,15 +524,11 @@ class LLMAgent:
         self._update_fact_if_contains(facts, lowered, text, "kpi", ["kpi", "метрик"])
         kv_matches = re.findall(r"([A-Za-zА-Яа-я0-9_ ]{2,30})\s*:\s*([^,\n]{2,80})", text)
         for key, value in kv_matches:
-            normalized = key.strip().lower().replace(" ", "_")
-            if len(normalized) > 30:
-                continue
-            facts[normalized] = value.strip()
+            normalized = self._normalize_memory_key(key)
+            if normalized:
+                facts[normalized] = value.strip()[:120]
         facts["last_user_intent"] = text[:140]
-        if len(facts) > 15:
-            keys = list(facts.keys())
-            for key in keys[:-15]:
-                facts.pop(key, None)
+        self._trim_memory(facts, 40)
 
     def _update_fact_if_contains(
         self,
@@ -422,11 +541,22 @@ class LLMAgent:
         if any(needle in lowered for needle in needles):
             facts[key] = original[:180]
 
-    def _facts_to_text(self, facts: dict[str, str]) -> str:
-        if not facts:
+    def _memory_to_text(self, memory: dict[str, str]) -> str:
+        if not memory:
             return ""
-        lines = [f"- {key}: {value}" for key, value in facts.items()]
-        return "\n".join(lines)
+        return "\n".join(f"- {key}: {value}" for key, value in memory.items())
+
+    def _normalize_memory_key(self, key: str) -> str:
+        normalized = key.strip().lower().replace(" ", "_")
+        normalized = re.sub(r"[^a-zа-я0-9_]+", "", normalized, flags=re.IGNORECASE)
+        return normalized[:40]
+
+    def _trim_memory(self, memory: dict[str, str], limit: int) -> None:
+        if len(memory) <= limit:
+            return
+        keys = list(memory.keys())
+        for key in keys[:-limit]:
+            memory.pop(key, None)
 
     def _estimate_tokens(self, text: str) -> int:
         cleaned = text.strip()
@@ -454,9 +584,7 @@ class LLMAgent:
         if not rates:
             return None
         input_rate, output_rate = rates
-        input_cost = (input_tokens / 1_000_000) * input_rate
-        output_cost = (output_tokens / 1_000_000) * output_rate
-        return input_cost + output_cost
+        return (input_tokens / 1_000_000) * input_rate + (output_tokens / 1_000_000) * output_rate
 
     def _infer_rates(self, model_id: str) -> tuple[float, float] | None:
         model = model_id.lower()
@@ -469,9 +597,7 @@ class LLMAgent:
         return None
 
     def _format_cost(self, cost: float | None) -> str:
-        if cost is None:
-            return "N/A"
-        return f"${cost:.6f}"
+        return "N/A" if cost is None else f"${cost:.6f}"
 
     def _friendly_error_text(self, error_text: str) -> str:
         normalized = error_text.lower()
@@ -482,8 +608,12 @@ class LLMAgent:
     def _default_state(self) -> dict:
         return {
             "active_branch": "main",
-            "branches": {"main": {"messages": [], "facts": {}, "checkpoints": []}},
+            "long_term_memory": {},
+            "branches": {"main": self._empty_branch()},
         }
+
+    def _empty_branch(self) -> dict:
+        return {"messages": [], "working_memory": {}, "checkpoints": []}
 
     def _load_state(self) -> dict:
         if not self.state_path.exists():
@@ -499,23 +629,34 @@ class LLMAgent:
         branches = parsed.get("branches", {})
         if not isinstance(branches, dict):
             return self._default_state()
+        long_term_memory = self._normalize_memory_map(parsed.get("long_term_memory", {}), 80)
         normalized_branches: dict[str, dict] = {}
         for name, branch in branches.items():
             if not isinstance(name, str) or not isinstance(branch, dict):
                 continue
             messages = self._normalize_messages(branch.get("messages", []))
-            facts = self._normalize_facts(branch.get("facts", {}))
+            legacy_facts = self._normalize_memory_map(branch.get("facts", {}), 40)
+            working_memory = self._normalize_memory_map(
+                branch.get("working_memory", branch.get("facts", {})),
+                40,
+            )
+            if not working_memory and legacy_facts:
+                working_memory = legacy_facts
             checkpoints = self._normalize_checkpoints(branch.get("checkpoints", []), len(messages))
             normalized_branches[name] = {
                 "messages": messages[-220:],
-                "facts": facts,
+                "working_memory": working_memory,
                 "checkpoints": checkpoints[-40:],
             }
         if not normalized_branches:
             return self._default_state()
         if active not in normalized_branches:
             active = sorted(normalized_branches.keys())[0]
-        return {"active_branch": active, "branches": normalized_branches}
+        return {
+            "active_branch": active,
+            "long_term_memory": long_term_memory,
+            "branches": normalized_branches,
+        }
 
     def _save_state(self, state: dict) -> None:
         payload = json.dumps(state, ensure_ascii=False, indent=2)
@@ -523,7 +664,7 @@ class LLMAgent:
 
     def _get_branch(self, state: dict, branch_id: str) -> dict:
         if branch_id not in state["branches"]:
-            state["branches"][branch_id] = {"messages": [], "facts": {}, "checkpoints": []}
+            state["branches"][branch_id] = self._empty_branch()
         return state["branches"][branch_id]
 
     def _normalize_messages(self, messages: object) -> list[dict]:
@@ -544,16 +685,16 @@ class LLMAgent:
             result.append(normalized)
         return result
 
-    def _normalize_facts(self, facts: object) -> dict[str, str]:
-        if not isinstance(facts, dict):
+    def _normalize_memory_map(self, raw: object, limit: int) -> dict[str, str]:
+        if not isinstance(raw, dict):
             return {}
         out: dict[str, str] = {}
-        for key, value in facts.items():
-            k = str(key).strip()
-            v = str(value).strip()
-            if not k or not v:
-                continue
-            out[k[:32]] = v[:200]
+        for key, value in raw.items():
+            normalized_key = self._normalize_memory_key(str(key))
+            normalized_value = str(value).strip()[:200]
+            if normalized_key and normalized_value:
+                out[normalized_key] = normalized_value
+        self._trim_memory(out, limit)
         return out
 
     def _normalize_checkpoints(self, checkpoints: object, max_messages: int) -> list[dict]:
@@ -568,7 +709,6 @@ class LLMAgent:
             idx_raw = item.get("message_index", 0)
             idx = int(idx_raw) if isinstance(idx_raw, int) else 0
             idx = max(0, min(idx, max_messages))
-            if not cid:
-                continue
-            out.append({"id": cid, "label": label[:60], "message_index": idx})
+            if cid:
+                out.append({"id": cid, "label": label[:60], "message_index": idx})
         return out
