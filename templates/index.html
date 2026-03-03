@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Day 11 - Memory Layers</title>
+  <title>Day 12 - Personalization</title>
   <style>
     :root {
       --bg: #0b1220;
@@ -261,8 +261,8 @@
   <div class="container">
     <div class="header">
       <div>
-        <h1>Day 11 - Assistant Memory Layers</h1>
-        <div class="sub">Short-term dialog + Working memory + Long-term memory with explicit save controls.</div>
+        <h1>Day 12 - Personalized Assistant</h1>
+        <div class="sub">Memory layers + user profiles (style/format/constraints/preferences) per request.</div>
         {% if status %}
         <div class="status status-global">{{ status }}</div>
         {% endif %}
@@ -310,6 +310,45 @@
             <input type="checkbox" name="include_memory_layers" {% if include_memory_layers %}checked{% endif %}>
             Use memory layers in prompt
           </label>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Profile Controls</h2>
+          <div class="field">
+            <label for="selected_profile">Active profile</label>
+            <select id="selected_profile" name="selected_profile">
+              {% for profile in profiles %}
+              <option value="{{ profile }}" {% if profile == selected_profile %}selected{% endif %}>{{ profile }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="actions">
+            <button type="submit" name="action" value="switch_profile" formnovalidate>Switch profile</button>
+            <button type="submit" name="action" value="delete_profile" formnovalidate>Delete profile</button>
+          </div>
+          <div class="field" style="margin-top: 10px;">
+            <label for="profile_id">Profile id (new or update)</label>
+            <input id="profile_id" name="profile_id" value="{{ profile_id }}" placeholder="e.g. manager_ru">
+          </div>
+          <div class="field">
+            <label for="profile_style">Style</label>
+            <input id="profile_style" name="profile_style" value="{{ profile_style }}" placeholder="e.g. concise, actionable">
+          </div>
+          <div class="field">
+            <label for="profile_format">Format</label>
+            <input id="profile_format" name="profile_format" value="{{ profile_format }}" placeholder="e.g. bullets + short summary">
+          </div>
+          <div class="field">
+            <label for="profile_constraints">Constraints</label>
+            <input id="profile_constraints" name="profile_constraints" value="{{ profile_constraints }}" placeholder="e.g. max 8 bullets, no fluff">
+          </div>
+          <div class="field">
+            <label for="profile_preferences">Preferences</label>
+            <input id="profile_preferences" name="profile_preferences" value="{{ profile_preferences }}" placeholder="e.g. mention risks automatically">
+          </div>
+          <div class="actions">
+            <button type="submit" name="action" value="save_profile" formnovalidate>Save profile</button>
+          </div>
         </div>
 
         <div class="panel">
@@ -402,6 +441,7 @@
               <span class="btn-spinner" aria-hidden="true"></span>
               <span class="btn-label">Send message</span>
             </button>
+            <button type="submit" name="action" value="compare_profiles">Compare 2 profiles</button>
             <button type="submit" name="action" value="compare_memory">Compare memory ON/OFF</button>
             <button type="submit" name="action" value="compare_strategies">Compare 3 strategies</button>
           </div>
@@ -409,6 +449,26 @@
       </main>
 
       <aside class="stack">
+        <div class="panel">
+          <h2 class="title">Compare Profiles Inputs</h2>
+          <div class="field">
+            <label for="compare_profile_a">Profile A</label>
+            <select id="compare_profile_a" name="compare_profile_a">
+              {% for profile in profiles %}
+              <option value="{{ profile }}" {% if profile == compare_profile_a %}selected{% endif %}>{{ profile }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="field">
+            <label for="compare_profile_b">Profile B</label>
+            <select id="compare_profile_b" name="compare_profile_b">
+              {% for profile in profiles %}
+              <option value="{{ profile }}" {% if profile == compare_profile_b %}selected{% endif %}>{{ profile }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
         <div class="panel">
           <h2 class="title">Short-term Memory (active window)</h2>
           <ul class="cp-list">
@@ -452,11 +512,13 @@
             Strategy: <strong>{{ result.strategy }}</strong><br>
             Branch: <strong>{{ result.branch }}</strong><br>
             Model: <strong>{{ result.used_model }}</strong><br>
+            Profile: <strong>{{ result.profile_id }}</strong><br>
             Latency: <strong>{{ result.latency_ms }} ms</strong><br>
             Total tokens: <strong>{{ result.total_tokens }}</strong><br>
             Request tokens: <strong>{{ result.current_request_tokens }}</strong><br>
             History full/effective: <strong>{{ result.history_tokens_full }}/{{ result.history_tokens_effective }}</strong><br>
             Working/Long-term tokens: <strong>{{ result.working_tokens }}/{{ result.long_term_tokens }}</strong><br>
+            Profile tokens: <strong>{{ result.profile_tokens }}</strong><br>
             Memory layers used: <strong>{{ "yes" if result.include_memory_layers else "no" }}</strong><br>
             Context estimate: <strong>{{ result.context_tokens_estimate }}/{{ result.context_limit_tokens }}</strong><br>
             Cost: <strong>{{ result.cost_text }}</strong>
@@ -465,24 +527,24 @@
         {% endif %}
 
         <div class="panel">
-          <h2 class="title">How to Verify Day 11</h2>
+          <h2 class="title">How to Verify Day 12</h2>
           <div class="hint">
-            1) Save 3-4 keys to Working memory for active branch.<br>
-            2) Save 2-3 profile keys to Long-term memory.<br>
-            3) Send prompt with memory ON and inspect answer details.<br>
-            4) Run Compare memory ON/OFF for same prompt.<br>
-            5) Check what appears in short-term / working / long-term panels.
+            1) Create at least 2 different profiles (e.g. analyst vs manager).<br>
+            2) Fill style/format/constraints/preferences for each profile.<br>
+            3) Send same prompt with profile A and profile B.<br>
+            4) Run Compare 2 profiles and inspect differences.<br>
+            5) Confirm assistant follows active profile automatically each turn.
           </div>
         </div>
 
         <div class="panel">
           <h2 class="title">Demo Prompts</h2>
           <div class="hint">
-            1) "Сделай план запуска продукта с учетом всех сохраненных ограничений."<br>
-            2) "Сравни рекомендации для моего профиля и прошлых решений."<br>
-            3) "Какие риски критичны именно для текущей задачи?"<br>
-            4) "Предложи вариант, не нарушающий budget и deadline из памяти."<br>
-            5) "Сначала перечисли, какие данные из памяти ты использовал."
+            1) "Сделай план запуска продукта на 3 недели."<br>
+            2) "Оформи ответ в стиле моего активного профиля."<br>
+            3) "Сначала перечисли ограничения, которые ты автоматически учел."<br>
+            4) "Дай 2 варианта: консервативный и агрессивный."<br>
+            5) "Объясни, чем ответ отличается для профиля A и B."
           </div>
         </div>
 
@@ -499,6 +561,7 @@
                   <th>HistEff</th>
                   <th>Working</th>
                   <th>Long-term</th>
+                  <th>Profile</th>
                   <th>Resp</th>
                   <th>Total</th>
                   <th>Cum</th>
@@ -514,6 +577,7 @@
                   <td>{{ row.hist_effective }}</td>
                   <td>{{ row.working_tokens }}</td>
                   <td>{{ row.long_term_tokens }}</td>
+                  <td>{{ row.profile_tokens }}</td>
                   <td>{{ row.resp }}</td>
                   <td>{{ row.total }}</td>
                   <td>{{ row.cumulative }}</td>
@@ -566,6 +630,24 @@
           </div>
         </div>
         {% endif %}
+
+        {% if compare_profiles_result %}
+        <div class="panel" id="compare-profiles-panel">
+          <h2 class="title">Profiles Compare (same prompt)</h2>
+          <div class="ab-grid">
+            {% for profile, res in compare_profiles_result.items() %}
+            <div class="ab-card">
+              <strong>{{ profile }}</strong><br>
+              Context: {{ res.context_tokens_estimate }}/{{ res.context_limit_tokens }}<br>
+              Working/Long-term/Profile: {{ res.working_tokens }}/{{ res.long_term_tokens }}/{{ res.profile_tokens }}<br>
+              Output tokens: {{ res.output_tokens }}<br>
+              Cost: {{ res.cost_text }}<br><br>
+              {{ res.text }}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
       </aside>
     </form>
   </div>
@@ -578,9 +660,12 @@
 
     if (chatWindow) chatWindow.scrollTop = chatWindow.scrollHeight;
 
+    var compareProfilesPanel = document.getElementById("compare-profiles-panel");
     var compareMemoryPanel = document.getElementById("compare-memory-panel");
     var comparePanel = document.getElementById("compare-result-panel");
-    if (compareMemoryPanel) {
+    if (compareProfilesPanel) {
+      compareProfilesPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (compareMemoryPanel) {
       compareMemoryPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     } else if (comparePanel) {
       comparePanel.scrollIntoView({ behavior: "smooth", block: "start" });

@@ -1,3 +1,5 @@
+import os
+
 from dotenv import load_dotenv
 from flask import Flask, render_template, request
 
@@ -59,9 +61,11 @@ def as_result_view(response) -> dict:
         "facts_tokens": response.facts_tokens,
         "working_tokens": response.working_tokens,
         "long_term_tokens": response.long_term_tokens,
+        "profile_tokens": response.profile_tokens,
         "context_tokens_estimate": response.context_tokens_estimate,
         "context_limit_tokens": response.context_limit_tokens,
         "include_memory_layers": response.include_memory_layers,
+        "profile_id": response.profile_id,
         "overflowed": response.overflowed,
     }
 
@@ -82,8 +86,11 @@ def build_token_growth(history: list[dict]) -> list[dict]:
         facts_tokens = int(meta.get("facts_tokens", 0) or 0)
         working_tokens = int(meta.get("working_tokens", facts_tokens) or 0)
         long_term_tokens = int(meta.get("long_term_tokens", 0) or 0)
+        profile_tokens = int(meta.get("profile_tokens", 0) or 0)
         resp = int(meta.get("response_tokens", 0) or 0)
-        total_turn = int(meta.get("total_turn_tokens", req + eff_hist + working_tokens + long_term_tokens + resp))
+        total_turn = int(
+            meta.get("total_turn_tokens", req + eff_hist + working_tokens + long_term_tokens + profile_tokens + resp)
+        )
         cumulative += total_turn
         rows.append(
             {
@@ -94,6 +101,7 @@ def build_token_growth(history: list[dict]) -> list[dict]:
                 "hist_effective": eff_hist,
                 "working_tokens": working_tokens,
                 "long_term_tokens": long_term_tokens,
+                "profile_tokens": profile_tokens,
                 "resp": resp,
                 "total": total_turn,
                 "cumulative": cumulative,
@@ -122,6 +130,15 @@ def index():
     context_limit = "200000"
     window_n = "8"
     include_memory_layers = True
+    selected_profile = agent.get_active_profile()
+    profiles = agent.list_profiles()
+    profile_id = selected_profile
+    profile_style = ""
+    profile_format = ""
+    profile_constraints = ""
+    profile_preferences = ""
+    compare_profile_a = selected_profile
+    compare_profile_b = selected_profile
     memory_layer = "working"
     memory_key = ""
     memory_value = ""
@@ -132,6 +149,7 @@ def index():
     result = {}
     compare_result = {}
     compare_memory_result = {}
+    compare_profiles_result = {}
 
     active_branch = agent.get_active_branch()
     selected_branch = active_branch
@@ -140,6 +158,11 @@ def index():
     short_term_memory = agent.short_term_memory(parse_window(window_n, 8), active_branch)
     working_memory = agent.load_working_memory(active_branch)
     long_term_memory = agent.load_long_term_memory()
+    active_profile_data = agent.load_profile(selected_profile)
+    profile_style = active_profile_data.get("style", "")
+    profile_format = active_profile_data.get("format", "")
+    profile_constraints = active_profile_data.get("constraints", "")
+    profile_preferences = active_profile_data.get("preferences", "")
     checkpoints = agent.list_checkpoints(active_branch)
     token_growth = build_token_growth(history)
     state_path = str(agent.state_path)
@@ -158,6 +181,14 @@ def index():
         context_limit = request.form.get("context_limit", "200000").strip()
         window_n = request.form.get("window_n", "8").strip()
         include_memory_layers = request.form.get("include_memory_layers", "") == "on"
+        selected_profile = request.form.get("selected_profile", selected_profile).strip() or selected_profile
+        profile_id = request.form.get("profile_id", selected_profile).strip()
+        profile_style = request.form.get("profile_style", "").strip()
+        profile_format = request.form.get("profile_format", "").strip()
+        profile_constraints = request.form.get("profile_constraints", "").strip()
+        profile_preferences = request.form.get("profile_preferences", "").strip()
+        compare_profile_a = request.form.get("compare_profile_a", selected_profile).strip() or selected_profile
+        compare_profile_b = request.form.get("compare_profile_b", selected_profile).strip() or selected_profile
         memory_layer = request.form.get("memory_layer", "working").strip().lower()
         memory_key = request.form.get("memory_key", "").strip()
         memory_value = request.form.get("memory_value", "").strip()
@@ -170,10 +201,34 @@ def index():
         parsed_max_tokens = parse_max_tokens(max_tokens, 600)
         parsed_context_limit = parse_context_limit(context_limit, 200000)
         parsed_window = parse_window(window_n, 8)
+        available_profiles = agent.list_profiles()
+        if selected_profile not in available_profiles:
+            selected_profile = agent.get_active_profile()
+        if compare_profile_a not in available_profiles:
+            compare_profile_a = selected_profile
+        if compare_profile_b not in available_profiles:
+            compare_profile_b = selected_profile
 
         if action == "clear_all":
             agent.clear_all()
             status = "All branches and history cleared."
+        elif action == "save_profile":
+            ok, message = agent.save_profile(
+                profile_id=profile_id,
+                style=profile_style,
+                output_format=profile_format,
+                constraints=profile_constraints,
+                preferences=profile_preferences,
+            )
+            status = message if ok else f"Save profile failed: {message}"
+        elif action == "switch_profile":
+            if agent.switch_profile(selected_profile):
+                status = f"Switched profile: {selected_profile}"
+            else:
+                status = f"Profile not found: {selected_profile}"
+        elif action == "delete_profile":
+            ok, message = agent.delete_profile(selected_profile)
+            status = message if ok else f"Delete profile failed: {message}"
         elif action == "save_memory":
             ok, message = agent.set_memory_item(
                 layer=memory_layer,
@@ -216,6 +271,7 @@ def index():
                         strategy=strat,
                         window_n=parsed_window,
                         branch_id=selected_branch,
+                        profile_id=selected_profile,
                         context_limit_override=parsed_context_limit,
                         include_memory_layers=include_memory_layers,
                     )
@@ -235,6 +291,7 @@ def index():
                     strategy=strategy,
                     window_n=parsed_window,
                     branch_id=selected_branch,
+                    profile_id=selected_profile,
                     context_limit_override=parsed_context_limit,
                     include_memory_layers=True,
                 )
@@ -246,6 +303,7 @@ def index():
                     strategy=strategy,
                     window_n=parsed_window,
                     branch_id=selected_branch,
+                    profile_id=selected_profile,
                     context_limit_override=parsed_context_limit,
                     include_memory_layers=False,
                 )
@@ -254,6 +312,39 @@ def index():
                     "without_memory": as_result_view(without_memory),
                 }
                 status = "Compared the same prompt with memory layers ON/OFF."
+            else:
+                status = "Prompt is empty."
+        elif action == "compare_profiles":
+            if prompt:
+                profile_a_resp = agent.run_chat_preview(
+                    user_message=prompt,
+                    model_id=selected_model,
+                    temperature=parsed_temp,
+                    max_tokens=parsed_max_tokens,
+                    strategy=strategy,
+                    window_n=parsed_window,
+                    branch_id=selected_branch,
+                    profile_id=compare_profile_a,
+                    context_limit_override=parsed_context_limit,
+                    include_memory_layers=include_memory_layers,
+                )
+                profile_b_resp = agent.run_chat_preview(
+                    user_message=prompt,
+                    model_id=selected_model,
+                    temperature=parsed_temp,
+                    max_tokens=parsed_max_tokens,
+                    strategy=strategy,
+                    window_n=parsed_window,
+                    branch_id=selected_branch,
+                    profile_id=compare_profile_b,
+                    context_limit_override=parsed_context_limit,
+                    include_memory_layers=include_memory_layers,
+                )
+                compare_profiles_result = {
+                    compare_profile_a: as_result_view(profile_a_resp),
+                    compare_profile_b: as_result_view(profile_b_resp),
+                }
+                status = "Compared answers for two profiles."
             else:
                 status = "Prompt is empty."
         elif action == "send":
@@ -266,6 +357,7 @@ def index():
                     strategy=strategy,
                     window_n=parsed_window,
                     branch_id=selected_branch,
+                    profile_id=selected_profile,
                     context_limit_override=parsed_context_limit,
                     include_memory_layers=include_memory_layers,
                 )
@@ -275,11 +367,18 @@ def index():
                 status = "Prompt is empty."
 
         active_branch = agent.get_active_branch()
+        selected_profile = agent.get_active_profile()
+        profiles = agent.list_profiles()
         branches = agent.list_branches()
         history = agent.load_history(active_branch)
         short_term_memory = agent.short_term_memory(parsed_window, active_branch)
         working_memory = agent.load_working_memory(active_branch)
         long_term_memory = agent.load_long_term_memory()
+        active_profile_data = agent.load_profile(selected_profile)
+        profile_style = active_profile_data.get("style", "")
+        profile_format = active_profile_data.get("format", "")
+        profile_constraints = active_profile_data.get("constraints", "")
+        profile_preferences = active_profile_data.get("preferences", "")
         checkpoints = agent.list_checkpoints(active_branch)
         token_growth = build_token_growth(history)
         if active_branch not in branches and branches:
@@ -297,6 +396,15 @@ def index():
         context_limit=context_limit,
         window_n=window_n,
         include_memory_layers=include_memory_layers,
+        selected_profile=selected_profile,
+        profiles=profiles,
+        profile_id=profile_id,
+        profile_style=profile_style,
+        profile_format=profile_format,
+        profile_constraints=profile_constraints,
+        profile_preferences=profile_preferences,
+        compare_profile_a=compare_profile_a,
+        compare_profile_b=compare_profile_b,
         memory_layer=memory_layer,
         memory_key=memory_key,
         memory_value=memory_value,
@@ -307,6 +415,7 @@ def index():
         result=result,
         compare_result=compare_result,
         compare_memory_result=compare_memory_result,
+        compare_profiles_result=compare_profiles_result,
         active_branch=active_branch,
         selected_branch=selected_branch,
         branches=branches,
@@ -322,4 +431,5 @@ def index():
 
 if __name__ == "__main__":
     load_dotenv()
-    app.run(debug=True)
+    port = int(os.getenv("PORT", "5051"))
+    app.run(debug=True, host="127.0.0.1", port=port)

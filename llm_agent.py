@@ -24,9 +24,11 @@ class AgentResponse:
     facts_tokens: int
     working_tokens: int
     long_term_tokens: int
+    profile_tokens: int
     context_tokens_estimate: int
     context_limit_tokens: int
     include_memory_layers: bool
+    profile_id: str
     overflowed: bool
 
 
@@ -68,6 +70,64 @@ class LLMAgent:
 
     def get_active_branch(self) -> str:
         return self._load_state()["active_branch"]
+
+    def list_profiles(self) -> list[str]:
+        state = self._load_state()
+        return sorted(state["profiles"].keys())
+
+    def get_active_profile(self) -> str:
+        return self._load_state()["active_profile"]
+
+    def load_profile(self, profile_id: str | None = None) -> dict[str, str]:
+        state = self._load_state()
+        active = profile_id or state["active_profile"]
+        profile = state["profiles"].get(active, {})
+        return dict(profile) if isinstance(profile, dict) else self._empty_profile()
+
+    def switch_profile(self, profile_id: str) -> bool:
+        state = self._load_state()
+        if profile_id not in state["profiles"]:
+            return False
+        state["active_profile"] = profile_id
+        self._save_state(state)
+        return True
+
+    def save_profile(
+        self,
+        profile_id: str,
+        style: str,
+        output_format: str,
+        constraints: str,
+        preferences: str,
+    ) -> tuple[bool, str]:
+        normalized = self._normalize_memory_key(profile_id)
+        if not normalized:
+            return False, "Profile id is empty."
+        state = self._load_state()
+        state["profiles"][normalized] = {
+            "style": style.strip()[:220],
+            "format": output_format.strip()[:220],
+            "constraints": constraints.strip()[:220],
+            "preferences": preferences.strip()[:220],
+        }
+        state["active_profile"] = normalized
+        self._save_state(state)
+        return True, f"Profile saved: {normalized}"
+
+    def delete_profile(self, profile_id: str) -> tuple[bool, str]:
+        normalized = self._normalize_memory_key(profile_id)
+        if not normalized:
+            return False, "Profile id is empty."
+        state = self._load_state()
+        if normalized == "default":
+            return False, "Default profile cannot be deleted."
+        if normalized not in state["profiles"]:
+            return False, f"Profile not found: {normalized}"
+        state["profiles"].pop(normalized, None)
+        if state["active_profile"] == normalized:
+            state["active_profile"] = "default"
+        self._save_state(state)
+        return True, f"Profile deleted: {normalized}"
 
     def switch_branch(self, branch_id: str) -> bool:
         state = self._load_state()
@@ -181,11 +241,14 @@ class LLMAgent:
         strategy: str,
         window_n: int,
         branch_id: str | None = None,
+        profile_id: str | None = None,
         context_limit_override: int | None = None,
         include_memory_layers: bool = True,
     ) -> AgentResponse:
         state = self._load_state()
         active = branch_id or state["active_branch"]
+        selected_profile = profile_id or state["active_profile"]
+        profile = self._get_profile(state, selected_profile)
         branch = self._get_branch(state, active)
         working_memory = dict(branch["working_memory"])
         if strategy == "facts":
@@ -204,6 +267,8 @@ class LLMAgent:
             effective_history=effective_history,
             working_memory=working_memory if include_memory_layers else {},
             long_term_memory=long_term if include_memory_layers else {},
+            profile=profile,
+            profile_id=selected_profile,
             context_limit_override=context_limit_override,
             include_memory_layers=include_memory_layers,
         )
@@ -217,12 +282,16 @@ class LLMAgent:
         strategy: str,
         window_n: int,
         branch_id: str | None = None,
+        profile_id: str | None = None,
         context_limit_override: int | None = None,
         include_memory_layers: bool = True,
     ) -> AgentResponse:
         state = self._load_state()
         active = branch_id or state["active_branch"]
+        selected_profile = profile_id or state["active_profile"]
+        state["active_profile"] = selected_profile
         state["active_branch"] = active
+        profile = self._get_profile(state, selected_profile)
         branch = self._get_branch(state, active)
         if strategy == "facts":
             self._update_facts(branch["working_memory"], user_message)
@@ -239,6 +308,8 @@ class LLMAgent:
             effective_history=effective_history,
             working_memory=branch["working_memory"] if include_memory_layers else {},
             long_term_memory=state["long_term_memory"] if include_memory_layers else {},
+            profile=profile,
+            profile_id=selected_profile,
             context_limit_override=context_limit_override,
             include_memory_layers=include_memory_layers,
         )
@@ -255,12 +326,14 @@ class LLMAgent:
                     "facts_tokens": response.facts_tokens,
                     "working_tokens": response.working_tokens,
                     "long_term_tokens": response.long_term_tokens,
+                    "profile_tokens": response.profile_tokens,
                     "response_tokens": response.output_tokens,
                     "total_turn_tokens": (
                         response.current_request_tokens
                         + response.history_tokens_effective
                         + response.working_tokens
                         + response.long_term_tokens
+                        + response.profile_tokens
                         + response.output_tokens
                     ),
                 },
@@ -282,6 +355,8 @@ class LLMAgent:
         effective_history: list[dict],
         working_memory: dict[str, str],
         long_term_memory: dict[str, str],
+        profile: dict[str, str],
+        profile_id: str,
         context_limit_override: int | None,
         include_memory_layers: bool,
     ) -> AgentResponse:
@@ -290,9 +365,17 @@ class LLMAgent:
         effective_history_tokens = self._estimate_history_tokens(effective_history)
         working_text = self._memory_to_text(working_memory)
         long_term_text = self._memory_to_text(long_term_memory)
+        profile_text = self._profile_to_text(profile)
         working_tokens = self._estimate_tokens(working_text)
         long_term_tokens = self._estimate_tokens(long_term_text)
-        context_tokens = current_request_tokens + effective_history_tokens + working_tokens + long_term_tokens
+        profile_tokens = self._estimate_tokens(profile_text)
+        context_tokens = (
+            current_request_tokens
+            + effective_history_tokens
+            + working_tokens
+            + long_term_tokens
+            + profile_tokens
+        )
         context_limit = context_limit_override or self._infer_context_limit_tokens(model_id)
         if context_tokens + max_tokens > context_limit:
             return self._overflow_response(
@@ -304,9 +387,11 @@ class LLMAgent:
                 effective_history_tokens=effective_history_tokens,
                 working_tokens=working_tokens,
                 long_term_tokens=long_term_tokens,
+                profile_tokens=profile_tokens,
                 context_tokens=context_tokens,
                 context_limit=context_limit,
                 include_memory_layers=include_memory_layers,
+                profile_id=profile_id,
             )
         prompt = self._build_chat_prompt(
             strategy=strategy,
@@ -314,6 +399,8 @@ class LLMAgent:
             user_message=user_message,
             working_memory_text=working_text,
             long_term_memory_text=long_term_text,
+            profile_id=profile_id,
+            profile_text=profile_text,
             include_memory_layers=include_memory_layers,
         )
         started = perf_counter()
@@ -336,9 +423,11 @@ class LLMAgent:
                 effective_history_tokens=effective_history_tokens,
                 working_tokens=working_tokens,
                 long_term_tokens=long_term_tokens,
+                profile_tokens=profile_tokens,
                 context_tokens=context_tokens,
                 context_limit=context_limit,
                 include_memory_layers=include_memory_layers,
+                profile_id=profile_id,
             )
         return self._success_response(
             text=text,
@@ -352,9 +441,11 @@ class LLMAgent:
             effective_history_tokens=effective_history_tokens,
             working_tokens=working_tokens,
             long_term_tokens=long_term_tokens,
+            profile_tokens=profile_tokens,
             context_tokens=context_tokens,
             context_limit=context_limit,
             include_memory_layers=include_memory_layers,
+            profile_id=profile_id,
         )
 
     def _success_response(
@@ -370,9 +461,11 @@ class LLMAgent:
         effective_history_tokens: int,
         working_tokens: int,
         long_term_tokens: int,
+        profile_tokens: int,
         context_tokens: int,
         context_limit: int,
         include_memory_layers: bool,
+        profile_id: str,
     ) -> AgentResponse:
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
@@ -395,9 +488,11 @@ class LLMAgent:
             facts_tokens=working_tokens,
             working_tokens=working_tokens,
             long_term_tokens=long_term_tokens,
+            profile_tokens=profile_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
             include_memory_layers=include_memory_layers,
+            profile_id=profile_id,
             overflowed=False,
         )
 
@@ -413,9 +508,11 @@ class LLMAgent:
         effective_history_tokens: int,
         working_tokens: int,
         long_term_tokens: int,
+        profile_tokens: int,
         context_tokens: int,
         context_limit: int,
         include_memory_layers: bool,
+        profile_id: str,
     ) -> AgentResponse:
         latency_ms = int((perf_counter() - started) * 1000)
         return AgentResponse(
@@ -434,9 +531,11 @@ class LLMAgent:
             facts_tokens=working_tokens,
             working_tokens=working_tokens,
             long_term_tokens=long_term_tokens,
+            profile_tokens=profile_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
             include_memory_layers=include_memory_layers,
+            profile_id=profile_id,
             overflowed=False,
         )
 
@@ -450,9 +549,11 @@ class LLMAgent:
         effective_history_tokens: int,
         working_tokens: int,
         long_term_tokens: int,
+        profile_tokens: int,
         context_tokens: int,
         context_limit: int,
         include_memory_layers: bool,
+        profile_id: str,
     ) -> AgentResponse:
         return AgentResponse(
             text="Error: estimated context exceeds model limit. Use smaller window or reduce memory.",
@@ -470,9 +571,11 @@ class LLMAgent:
             facts_tokens=working_tokens,
             working_tokens=working_tokens,
             long_term_tokens=long_term_tokens,
+            profile_tokens=profile_tokens,
             context_tokens_estimate=context_tokens,
             context_limit_tokens=context_limit,
             include_memory_layers=include_memory_layers,
+            profile_id=profile_id,
             overflowed=True,
         )
 
@@ -489,6 +592,8 @@ class LLMAgent:
         user_message: str,
         working_memory_text: str,
         long_term_memory_text: str,
+        profile_id: str,
+        profile_text: str,
         include_memory_layers: bool,
     ) -> str:
         lines = [
@@ -496,6 +601,9 @@ class LLMAgent:
             "Respect existing decisions and constraints from context.",
             f"Context strategy: {strategy}",
             f"Memory layers enabled: {'yes' if include_memory_layers else 'no'}",
+            f"Active user profile: {profile_id}",
+            "Personalization profile:",
+            profile_text or "- empty",
         ]
         if include_memory_layers:
             lines.extend(["", "Working memory (current task):", working_memory_text or "- empty"])
@@ -545,6 +653,16 @@ class LLMAgent:
         if not memory:
             return ""
         return "\n".join(f"- {key}: {value}" for key, value in memory.items())
+
+    def _profile_to_text(self, profile: dict[str, str]) -> str:
+        if not profile:
+            return ""
+        lines = []
+        for key in ("style", "format", "constraints", "preferences"):
+            value = profile.get(key, "").strip()
+            if value:
+                lines.append(f"- {key}: {value}")
+        return "\n".join(lines)
 
     def _normalize_memory_key(self, key: str) -> str:
         normalized = key.strip().lower().replace(" ", "_")
@@ -608,12 +726,17 @@ class LLMAgent:
     def _default_state(self) -> dict:
         return {
             "active_branch": "main",
+            "active_profile": "default",
             "long_term_memory": {},
+            "profiles": {"default": self._empty_profile()},
             "branches": {"main": self._empty_branch()},
         }
 
     def _empty_branch(self) -> dict:
         return {"messages": [], "working_memory": {}, "checkpoints": []}
+
+    def _empty_profile(self) -> dict[str, str]:
+        return {"style": "", "format": "", "constraints": "", "preferences": ""}
 
     def _load_state(self) -> dict:
         if not self.state_path.exists():
@@ -626,10 +749,12 @@ class LLMAgent:
         if not isinstance(parsed, dict):
             return self._default_state()
         active = str(parsed.get("active_branch", "main")).strip() or "main"
+        active_profile = str(parsed.get("active_profile", "default")).strip() or "default"
         branches = parsed.get("branches", {})
         if not isinstance(branches, dict):
             return self._default_state()
         long_term_memory = self._normalize_memory_map(parsed.get("long_term_memory", {}), 80)
+        profiles = self._normalize_profiles(parsed.get("profiles", {}))
         normalized_branches: dict[str, dict] = {}
         for name, branch in branches.items():
             if not isinstance(name, str) or not isinstance(branch, dict):
@@ -652,9 +777,13 @@ class LLMAgent:
             return self._default_state()
         if active not in normalized_branches:
             active = sorted(normalized_branches.keys())[0]
+        if active_profile not in profiles:
+            active_profile = "default"
         return {
             "active_branch": active,
+            "active_profile": active_profile,
             "long_term_memory": long_term_memory,
+            "profiles": profiles,
             "branches": normalized_branches,
         }
 
@@ -666,6 +795,12 @@ class LLMAgent:
         if branch_id not in state["branches"]:
             state["branches"][branch_id] = self._empty_branch()
         return state["branches"][branch_id]
+
+    def _get_profile(self, state: dict, profile_id: str) -> dict[str, str]:
+        if profile_id not in state["profiles"]:
+            state["profiles"][profile_id] = self._empty_profile()
+        profile = state["profiles"][profile_id]
+        return profile if isinstance(profile, dict) else self._empty_profile()
 
     def _normalize_messages(self, messages: object) -> list[dict]:
         if not isinstance(messages, list):
@@ -696,6 +831,25 @@ class LLMAgent:
                 out[normalized_key] = normalized_value
         self._trim_memory(out, limit)
         return out
+
+    def _normalize_profiles(self, raw: object) -> dict[str, dict[str, str]]:
+        if not isinstance(raw, dict):
+            return {"default": self._empty_profile()}
+        normalized: dict[str, dict[str, str]] = {}
+        for profile_id, profile in raw.items():
+            pid = self._normalize_memory_key(str(profile_id))
+            if not pid:
+                continue
+            if isinstance(profile, dict):
+                normalized[pid] = {
+                    "style": str(profile.get("style", "")).strip()[:220],
+                    "format": str(profile.get("format", "")).strip()[:220],
+                    "constraints": str(profile.get("constraints", "")).strip()[:220],
+                    "preferences": str(profile.get("preferences", "")).strip()[:220],
+                }
+        if "default" not in normalized:
+            normalized["default"] = self._empty_profile()
+        return normalized
 
     def _normalize_checkpoints(self, checkpoints: object, max_messages: int) -> list[dict]:
         if not isinstance(checkpoints, list):
