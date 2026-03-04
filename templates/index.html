@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Day 12 - Personalization</title>
+  <title>Day 13 - Task State Machine</title>
   <style>
     :root {
       --bg: #0b1220;
@@ -261,8 +261,8 @@
   <div class="container">
     <div class="header">
       <div>
-        <h1>Day 12 - Personalized Assistant</h1>
-        <div class="sub">Memory layers + user profiles (style/format/constraints/preferences) per request.</div>
+        <h1>Day 13 - Task State Machine</h1>
+        <div class="sub">Formal task flow (planning/execution/validation/done) with pause/resume + memory + profiles.</div>
         {% if status %}
         <div class="status status-global">{{ status }}</div>
         {% endif %}
@@ -310,6 +310,33 @@
             <input type="checkbox" name="include_memory_layers" {% if include_memory_layers %}checked{% endif %}>
             Use memory layers in prompt
           </label>
+        </div>
+
+        <div class="panel">
+          <h2 class="title">Task State Machine</h2>
+          <div class="field">
+            <label for="task_stage">Stage</label>
+            <select id="task_stage" name="task_stage">
+              <option value="planning" {% if task_stage == "planning" %}selected{% endif %}>planning</option>
+              <option value="execution" {% if task_stage == "execution" %}selected{% endif %}>execution</option>
+              <option value="validation" {% if task_stage == "validation" %}selected{% endif %}>validation</option>
+              <option value="done" {% if task_stage == "done" %}selected{% endif %}>done</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="task_step">Current step</label>
+            <input id="task_step" name="task_step" value="{{ task_step }}" placeholder="e.g. Gather constraints from user">
+          </div>
+          <div class="field">
+            <label for="expected_action">Expected action</label>
+            <input id="expected_action" name="expected_action" value="{{ expected_action }}" placeholder="e.g. Confirm plan and move to execution">
+          </div>
+          <div class="actions">
+            <button type="submit" name="action" value="set_task_state" formnovalidate>Update state</button>
+            <button type="submit" name="action" value="advance_task_stage" formnovalidate>Next stage</button>
+            <button type="submit" name="action" value="pause_task" formnovalidate>Pause</button>
+            <button type="submit" name="action" value="resume_task" formnovalidate>Resume</button>
+          </div>
         </div>
 
         <div class="panel">
@@ -450,6 +477,16 @@
 
       <aside class="stack">
         <div class="panel">
+          <h2 class="title">Current Task State</h2>
+          <div class="stats">
+            Stage: <strong>{{ task_state.stage }}</strong><br>
+            Current step: <strong>{{ task_state.current_step }}</strong><br>
+            Expected action: <strong>{{ task_state.expected_action }}</strong><br>
+            Paused: <strong>{{ "yes" if task_state.paused else "no" }}</strong>
+          </div>
+        </div>
+
+        <div class="panel">
           <h2 class="title">Compare Profiles Inputs</h2>
           <div class="field">
             <label for="compare_profile_a">Profile A</label>
@@ -527,24 +564,24 @@
         {% endif %}
 
         <div class="panel">
-          <h2 class="title">How to Verify Day 12</h2>
+          <h2 class="title">How to Verify Day 13</h2>
           <div class="hint">
-            1) Create at least 2 different profiles (e.g. analyst vs manager).<br>
-            2) Fill style/format/constraints/preferences for each profile.<br>
-            3) Send same prompt with profile A and profile B.<br>
-            4) Run Compare 2 profiles and inspect differences.<br>
-            5) Confirm assistant follows active profile automatically each turn.
+            1) Set stage=planning, step and expected action.<br>
+            2) Send prompt and confirm assistant follows stage context.<br>
+            3) Pause at any stage, send message, then Resume.<br>
+            4) Move stage with Next stage until done.<br>
+            5) Continue after pause without repeating previous explanation.
           </div>
         </div>
 
         <div class="panel">
           <h2 class="title">Demo Prompts</h2>
           <div class="hint">
-            1) "Сделай план запуска продукта на 3 недели."<br>
-            2) "Оформи ответ в стиле моего активного профиля."<br>
-            3) "Сначала перечисли ограничения, которые ты автоматически учел."<br>
-            4) "Дай 2 варианта: консервативный и агрессивный."<br>
-            5) "Объясни, чем ответ отличается для профиля A и B."
+            1) "На этапе planning собери требования и выдай план."<br>
+            2) "Переходим к execution: распиши конкретные шаги реализации."<br>
+            3) "Поставь паузу: я вернусь позже и продолжим без повтора."<br>
+            4) "Продолжай с текущего этапа и шага, где остановились."<br>
+            5) "Перейди к validation и проверь результат по критериям."
           </div>
         </div>
 
@@ -556,6 +593,8 @@
                 <tr>
                   <th>Turn</th>
                   <th>Strategy</th>
+                  <th>Stage</th>
+                  <th>Paused</th>
                   <th>Req</th>
                   <th>HistFull</th>
                   <th>HistEff</th>
@@ -572,6 +611,8 @@
                 <tr>
                   <td>#{{ row.turn }}</td>
                   <td>{{ row.strategy }}</td>
+                  <td>{{ row.task_stage }}</td>
+                  <td>{{ "yes" if row.task_paused else "no" }}</td>
                   <td>{{ row.req }}</td>
                   <td>{{ row.hist_full }}</td>
                   <td>{{ row.hist_effective }}</td>

@@ -96,6 +96,8 @@ def build_token_growth(history: list[dict]) -> list[dict]:
             {
                 "turn": turn,
                 "strategy": str(meta.get("strategy", "")),
+                "task_stage": str(meta.get("task_stage", "")),
+                "task_paused": bool(meta.get("task_paused", False)),
                 "req": req,
                 "hist_full": full_hist,
                 "hist_effective": eff_hist,
@@ -139,6 +141,9 @@ def index():
     profile_preferences = ""
     compare_profile_a = selected_profile
     compare_profile_b = selected_profile
+    task_stage = "planning"
+    task_step = ""
+    expected_action = ""
     memory_layer = "working"
     memory_key = ""
     memory_value = ""
@@ -164,6 +169,10 @@ def index():
     profile_constraints = active_profile_data.get("constraints", "")
     profile_preferences = active_profile_data.get("preferences", "")
     checkpoints = agent.list_checkpoints(active_branch)
+    task_state = agent.load_task_state(active_branch)
+    task_stage = str(task_state.get("stage", "planning"))
+    task_step = str(task_state.get("current_step", ""))
+    expected_action = str(task_state.get("expected_action", ""))
     token_growth = build_token_growth(history)
     state_path = str(agent.state_path)
 
@@ -189,6 +198,9 @@ def index():
         profile_preferences = request.form.get("profile_preferences", "").strip()
         compare_profile_a = request.form.get("compare_profile_a", selected_profile).strip() or selected_profile
         compare_profile_b = request.form.get("compare_profile_b", selected_profile).strip() or selected_profile
+        task_stage = request.form.get("task_stage", task_stage).strip().lower()
+        task_step = request.form.get("task_step", task_step).strip()
+        expected_action = request.form.get("expected_action", expected_action).strip()
         memory_layer = request.form.get("memory_layer", "working").strip().lower()
         memory_key = request.form.get("memory_key", "").strip()
         memory_value = request.form.get("memory_value", "").strip()
@@ -212,6 +224,23 @@ def index():
         if action == "clear_all":
             agent.clear_all()
             status = "All branches and history cleared."
+        elif action == "set_task_state":
+            ok, message = agent.set_task_state(
+                stage=task_stage,
+                current_step=task_step,
+                expected_action=expected_action,
+                branch_id=selected_branch,
+            )
+            status = message if ok else f"Set task state failed: {message}"
+        elif action == "advance_task_stage":
+            ok, message = agent.advance_task_stage(selected_branch)
+            status = message if ok else f"Advance stage failed: {message}"
+        elif action == "pause_task":
+            ok, message = agent.pause_task(selected_branch)
+            status = message if ok else f"Pause failed: {message}"
+        elif action == "resume_task":
+            ok, message = agent.resume_task(selected_branch)
+            status = message if ok else f"Resume failed: {message}"
         elif action == "save_profile":
             ok, message = agent.save_profile(
                 profile_id=profile_id,
@@ -380,6 +409,10 @@ def index():
         profile_constraints = active_profile_data.get("constraints", "")
         profile_preferences = active_profile_data.get("preferences", "")
         checkpoints = agent.list_checkpoints(active_branch)
+        task_state = agent.load_task_state(active_branch)
+        task_stage = str(task_state.get("stage", "planning"))
+        task_step = str(task_state.get("current_step", ""))
+        expected_action = str(task_state.get("expected_action", ""))
         token_growth = build_token_growth(history)
         if active_branch not in branches and branches:
             active_branch = branches[0]
@@ -405,6 +438,10 @@ def index():
         profile_preferences=profile_preferences,
         compare_profile_a=compare_profile_a,
         compare_profile_b=compare_profile_b,
+        task_state=task_state,
+        task_stage=task_stage,
+        task_step=task_step,
+        expected_action=expected_action,
         memory_layer=memory_layer,
         memory_key=memory_key,
         memory_value=memory_value,

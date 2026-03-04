@@ -171,6 +171,71 @@ class LLMAgent:
         self._save_state(state)
         return True, "Branch created."
 
+    def load_task_state(self, branch_id: str | None = None) -> dict[str, object]:
+        state = self._load_state()
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        task_state = branch.get("task_state", {})
+        return dict(task_state) if isinstance(task_state, dict) else self._default_task_state()
+
+    def set_task_state(
+        self,
+        stage: str,
+        current_step: str,
+        expected_action: str,
+        branch_id: str | None = None,
+    ) -> tuple[bool, str]:
+        normalized_stage = self._normalize_stage(stage)
+        if not normalized_stage:
+            return False, f"Unknown stage: {stage}"
+        state = self._load_state()
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        branch["task_state"] = {
+            "stage": normalized_stage,
+            "current_step": current_step.strip()[:220],
+            "expected_action": expected_action.strip()[:220],
+            "paused": bool(branch.get("task_state", {}).get("paused", False)),
+        }
+        self._save_state(state)
+        return True, f"Task state updated: {normalized_stage}"
+
+    def pause_task(self, branch_id: str | None = None) -> tuple[bool, str]:
+        state = self._load_state()
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        task_state = self._ensure_task_state(branch)
+        task_state["paused"] = True
+        self._save_state(state)
+        return True, "Task paused."
+
+    def resume_task(self, branch_id: str | None = None) -> tuple[bool, str]:
+        state = self._load_state()
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        task_state = self._ensure_task_state(branch)
+        task_state["paused"] = False
+        self._save_state(state)
+        return True, "Task resumed."
+
+    def advance_task_stage(self, branch_id: str | None = None) -> tuple[bool, str]:
+        state = self._load_state()
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        task_state = self._ensure_task_state(branch)
+        current = str(task_state.get("stage", "planning")).strip().lower()
+        flow = ["planning", "execution", "validation", "done"]
+        if current not in flow:
+            current = "planning"
+        idx = flow.index(current)
+        if idx == len(flow) - 1:
+            return False, "Task already at final stage: done"
+        next_stage = flow[idx + 1]
+        task_state["stage"] = next_stage
+        if next_stage == "execution":
+            task_state["expected_action"] = "Implement planned solution."
+        elif next_stage == "validation":
+            task_state["expected_action"] = "Validate output and compare with requirements."
+        elif next_stage == "done":
+            task_state["expected_action"] = "Finalize result and summarize."
+        self._save_state(state)
+        return True, f"Task moved to: {next_stage}"
+
     def set_memory_item(
         self,
         layer: str,
@@ -250,6 +315,7 @@ class LLMAgent:
         selected_profile = profile_id or state["active_profile"]
         profile = self._get_profile(state, selected_profile)
         branch = self._get_branch(state, active)
+        task_state = self._ensure_task_state(branch)
         working_memory = dict(branch["working_memory"])
         if strategy == "facts":
             self._update_facts(working_memory, user_message)
@@ -269,6 +335,7 @@ class LLMAgent:
             long_term_memory=long_term if include_memory_layers else {},
             profile=profile,
             profile_id=selected_profile,
+            task_state=task_state,
             context_limit_override=context_limit_override,
             include_memory_layers=include_memory_layers,
         )
@@ -293,6 +360,7 @@ class LLMAgent:
         state["active_branch"] = active
         profile = self._get_profile(state, selected_profile)
         branch = self._get_branch(state, active)
+        task_state = self._ensure_task_state(branch)
         if strategy == "facts":
             self._update_facts(branch["working_memory"], user_message)
         full_history = list(branch["messages"])
@@ -310,6 +378,7 @@ class LLMAgent:
             long_term_memory=state["long_term_memory"] if include_memory_layers else {},
             profile=profile,
             profile_id=selected_profile,
+            task_state=task_state,
             context_limit_override=context_limit_override,
             include_memory_layers=include_memory_layers,
         )
@@ -327,6 +396,8 @@ class LLMAgent:
                     "working_tokens": response.working_tokens,
                     "long_term_tokens": response.long_term_tokens,
                     "profile_tokens": response.profile_tokens,
+                    "task_stage": task_state.get("stage", "planning"),
+                    "task_paused": bool(task_state.get("paused", False)),
                     "response_tokens": response.output_tokens,
                     "total_turn_tokens": (
                         response.current_request_tokens
@@ -357,6 +428,7 @@ class LLMAgent:
         long_term_memory: dict[str, str],
         profile: dict[str, str],
         profile_id: str,
+        task_state: dict[str, object],
         context_limit_override: int | None,
         include_memory_layers: bool,
     ) -> AgentResponse:
@@ -366,15 +438,18 @@ class LLMAgent:
         working_text = self._memory_to_text(working_memory)
         long_term_text = self._memory_to_text(long_term_memory)
         profile_text = self._profile_to_text(profile)
+        task_state_text = self._task_state_to_text(task_state)
         working_tokens = self._estimate_tokens(working_text)
         long_term_tokens = self._estimate_tokens(long_term_text)
         profile_tokens = self._estimate_tokens(profile_text)
+        task_state_tokens = self._estimate_tokens(task_state_text)
         context_tokens = (
             current_request_tokens
             + effective_history_tokens
             + working_tokens
             + long_term_tokens
             + profile_tokens
+            + task_state_tokens
         )
         context_limit = context_limit_override or self._infer_context_limit_tokens(model_id)
         if context_tokens + max_tokens > context_limit:
@@ -401,6 +476,7 @@ class LLMAgent:
             long_term_memory_text=long_term_text,
             profile_id=profile_id,
             profile_text=profile_text,
+            task_state_text=task_state_text,
             include_memory_layers=include_memory_layers,
         )
         started = perf_counter()
@@ -594,6 +670,7 @@ class LLMAgent:
         long_term_memory_text: str,
         profile_id: str,
         profile_text: str,
+        task_state_text: str,
         include_memory_layers: bool,
     ) -> str:
         lines = [
@@ -604,6 +681,8 @@ class LLMAgent:
             f"Active user profile: {profile_id}",
             "Personalization profile:",
             profile_text or "- empty",
+            "Task state machine:",
+            task_state_text or "- empty",
         ]
         if include_memory_layers:
             lines.extend(["", "Working memory (current task):", working_memory_text or "- empty"])
@@ -662,6 +741,20 @@ class LLMAgent:
             value = profile.get(key, "").strip()
             if value:
                 lines.append(f"- {key}: {value}")
+        return "\n".join(lines)
+
+    def _task_state_to_text(self, task_state: dict[str, object]) -> str:
+        stage = str(task_state.get("stage", "planning")).strip().lower()
+        current_step = str(task_state.get("current_step", "")).strip()
+        expected_action = str(task_state.get("expected_action", "")).strip()
+        paused = bool(task_state.get("paused", False))
+        lines = [
+            f"- stage: {stage}",
+            f"- current_step: {current_step or 'not set'}",
+            f"- expected_action: {expected_action or 'not set'}",
+            f"- paused: {'yes' if paused else 'no'}",
+            "- workflow: planning -> execution -> validation -> done",
+        ]
         return "\n".join(lines)
 
     def _normalize_memory_key(self, key: str) -> str:
@@ -733,10 +826,45 @@ class LLMAgent:
         }
 
     def _empty_branch(self) -> dict:
-        return {"messages": [], "working_memory": {}, "checkpoints": []}
+        return {
+            "messages": [],
+            "working_memory": {},
+            "checkpoints": [],
+            "task_state": self._default_task_state(),
+        }
 
     def _empty_profile(self) -> dict[str, str]:
         return {"style": "", "format": "", "constraints": "", "preferences": ""}
+
+    def _default_task_state(self) -> dict[str, object]:
+        return {
+            "stage": "planning",
+            "current_step": "Collect requirements and outline plan.",
+            "expected_action": "Provide or confirm plan details.",
+            "paused": False,
+        }
+
+    def _normalize_stage(self, stage: str) -> str:
+        normalized = stage.strip().lower()
+        return normalized if normalized in {"planning", "execution", "validation", "done"} else ""
+
+    def _normalize_task_state(self, raw: object) -> dict[str, object]:
+        if not isinstance(raw, dict):
+            return self._default_task_state()
+        stage = self._normalize_stage(str(raw.get("stage", "planning"))) or "planning"
+        current_step = str(raw.get("current_step", "")).strip()[:220]
+        expected_action = str(raw.get("expected_action", "")).strip()[:220]
+        paused = bool(raw.get("paused", False))
+        if not current_step:
+            current_step = self._default_task_state()["current_step"]
+        if not expected_action:
+            expected_action = self._default_task_state()["expected_action"]
+        return {
+            "stage": stage,
+            "current_step": current_step,
+            "expected_action": expected_action,
+            "paused": paused,
+        }
 
     def _load_state(self) -> dict:
         if not self.state_path.exists():
@@ -768,10 +896,12 @@ class LLMAgent:
             if not working_memory and legacy_facts:
                 working_memory = legacy_facts
             checkpoints = self._normalize_checkpoints(branch.get("checkpoints", []), len(messages))
+            task_state = self._normalize_task_state(branch.get("task_state", {}))
             normalized_branches[name] = {
                 "messages": messages[-220:],
                 "working_memory": working_memory,
                 "checkpoints": checkpoints[-40:],
+                "task_state": task_state,
             }
         if not normalized_branches:
             return self._default_state()
@@ -794,13 +924,20 @@ class LLMAgent:
     def _get_branch(self, state: dict, branch_id: str) -> dict:
         if branch_id not in state["branches"]:
             state["branches"][branch_id] = self._empty_branch()
-        return state["branches"][branch_id]
+        branch = state["branches"][branch_id]
+        self._ensure_task_state(branch)
+        return branch
 
     def _get_profile(self, state: dict, profile_id: str) -> dict[str, str]:
         if profile_id not in state["profiles"]:
             state["profiles"][profile_id] = self._empty_profile()
         profile = state["profiles"][profile_id]
         return profile if isinstance(profile, dict) else self._empty_profile()
+
+    def _ensure_task_state(self, branch: dict) -> dict[str, object]:
+        task_state = self._normalize_task_state(branch.get("task_state", {}))
+        branch["task_state"] = task_state
+        return task_state
 
     def _normalize_messages(self, messages: object) -> list[dict]:
         if not isinstance(messages, list):
