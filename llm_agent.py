@@ -30,6 +30,9 @@ class AgentResponse:
     include_memory_layers: bool
     profile_id: str
     overflowed: bool
+    invariant_tokens: int = 0
+    blocked_by_invariants: bool = False
+    invariant_report: str = ""
 
 
 class LLMAgent:
@@ -53,6 +56,62 @@ class LLMAgent:
     def load_long_term_memory(self) -> dict[str, str]:
         state = self._load_state()
         return dict(state["long_term_memory"])
+
+    def load_invariants(self) -> list[dict[str, str | bool]]:
+        state = self._load_state()
+        invariants = state.get("invariants", {})
+        if not isinstance(invariants, dict):
+            return []
+        rows: list[dict[str, str | bool]] = []
+        for inv_id in sorted(invariants.keys()):
+            item = invariants.get(inv_id, {})
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                {
+                    "id": inv_id,
+                    "category": str(item.get("category", "general")),
+                    "text": str(item.get("text", "")),
+                    "enabled": bool(item.get("enabled", True)),
+                }
+            )
+        return rows
+
+    def save_invariant(
+        self,
+        invariant_id: str,
+        category: str,
+        text: str,
+        enabled: bool = True,
+    ) -> tuple[bool, str]:
+        normalized = self._normalize_memory_key(invariant_id)
+        if not normalized:
+            return False, "Invariant id is empty."
+        cleaned_text = text.strip()[:240]
+        if not cleaned_text:
+            return False, "Invariant text is empty."
+        state = self._load_state()
+        if "invariants" not in state or not isinstance(state["invariants"], dict):
+            state["invariants"] = {}
+        state["invariants"][normalized] = {
+            "category": (category.strip().lower() or "general")[:40],
+            "text": cleaned_text,
+            "enabled": bool(enabled),
+        }
+        self._save_state(state)
+        return True, f"Invariant saved: {normalized}"
+
+    def delete_invariant(self, invariant_id: str) -> tuple[bool, str]:
+        normalized = self._normalize_memory_key(invariant_id)
+        if not normalized:
+            return False, "Invariant id is empty."
+        state = self._load_state()
+        invariants = state.get("invariants", {})
+        if not isinstance(invariants, dict) or normalized not in invariants:
+            return False, f"Invariant not found: {normalized}"
+        invariants.pop(normalized, None)
+        self._save_state(state)
+        return True, f"Invariant deleted: {normalized}"
 
     def short_term_memory(self, window_n: int = 8, branch_id: str | None = None) -> list[dict]:
         history = self.load_history(branch_id)
@@ -316,6 +375,7 @@ class LLMAgent:
         profile = self._get_profile(state, selected_profile)
         branch = self._get_branch(state, active)
         task_state = self._ensure_task_state(branch)
+        invariants = self._get_enabled_invariants(state)
         working_memory = dict(branch["working_memory"])
         if strategy == "facts":
             self._update_facts(working_memory, user_message)
@@ -336,6 +396,7 @@ class LLMAgent:
             profile=profile,
             profile_id=selected_profile,
             task_state=task_state,
+            invariants=invariants,
             context_limit_override=context_limit_override,
             include_memory_layers=include_memory_layers,
         )
@@ -361,6 +422,7 @@ class LLMAgent:
         profile = self._get_profile(state, selected_profile)
         branch = self._get_branch(state, active)
         task_state = self._ensure_task_state(branch)
+        invariants = self._get_enabled_invariants(state)
         if strategy == "facts":
             self._update_facts(branch["working_memory"], user_message)
         full_history = list(branch["messages"])
@@ -379,6 +441,7 @@ class LLMAgent:
             profile=profile,
             profile_id=selected_profile,
             task_state=task_state,
+            invariants=invariants,
             context_limit_override=context_limit_override,
             include_memory_layers=include_memory_layers,
         )
@@ -396,6 +459,9 @@ class LLMAgent:
                     "working_tokens": response.working_tokens,
                     "long_term_tokens": response.long_term_tokens,
                     "profile_tokens": response.profile_tokens,
+                    "invariant_tokens": response.invariant_tokens,
+                    "blocked_by_invariants": response.blocked_by_invariants,
+                    "invariant_report": response.invariant_report,
                     "task_stage": task_state.get("stage", "planning"),
                     "task_paused": bool(task_state.get("paused", False)),
                     "response_tokens": response.output_tokens,
@@ -405,6 +471,7 @@ class LLMAgent:
                         + response.working_tokens
                         + response.long_term_tokens
                         + response.profile_tokens
+                        + response.invariant_tokens
                         + response.output_tokens
                     ),
                 },
@@ -429,9 +496,27 @@ class LLMAgent:
         profile: dict[str, str],
         profile_id: str,
         task_state: dict[str, object],
+        invariants: list[dict[str, str | bool]],
         context_limit_override: int | None,
         include_memory_layers: bool,
     ) -> AgentResponse:
+        violations = self._detect_invariant_violations(user_message, invariants)
+        if violations:
+            return self._invariant_blocked_response(
+                model=model_id,
+                strategy=strategy,
+                branch=branch,
+                current_request_tokens=self._estimate_tokens(user_message),
+                full_history_tokens=self._estimate_history_tokens(full_history),
+                effective_history_tokens=self._estimate_history_tokens(effective_history),
+                working_tokens=self._estimate_tokens(self._memory_to_text(working_memory)),
+                long_term_tokens=self._estimate_tokens(self._memory_to_text(long_term_memory)),
+                profile_tokens=self._estimate_tokens(self._profile_to_text(profile)),
+                context_limit=context_limit_override or self._infer_context_limit_tokens(model_id),
+                include_memory_layers=include_memory_layers,
+                profile_id=profile_id,
+                violations=violations,
+            )
         current_request_tokens = self._estimate_tokens(user_message)
         full_history_tokens = self._estimate_history_tokens(full_history)
         effective_history_tokens = self._estimate_history_tokens(effective_history)
@@ -439,10 +524,12 @@ class LLMAgent:
         long_term_text = self._memory_to_text(long_term_memory)
         profile_text = self._profile_to_text(profile)
         task_state_text = self._task_state_to_text(task_state)
+        invariants_text = self._invariants_to_text(invariants)
         working_tokens = self._estimate_tokens(working_text)
         long_term_tokens = self._estimate_tokens(long_term_text)
         profile_tokens = self._estimate_tokens(profile_text)
         task_state_tokens = self._estimate_tokens(task_state_text)
+        invariants_tokens = self._estimate_tokens(invariants_text)
         context_tokens = (
             current_request_tokens
             + effective_history_tokens
@@ -450,6 +537,7 @@ class LLMAgent:
             + long_term_tokens
             + profile_tokens
             + task_state_tokens
+            + invariants_tokens
         )
         context_limit = context_limit_override or self._infer_context_limit_tokens(model_id)
         if context_tokens + max_tokens > context_limit:
@@ -467,6 +555,7 @@ class LLMAgent:
                 context_limit=context_limit,
                 include_memory_layers=include_memory_layers,
                 profile_id=profile_id,
+                invariant_tokens=invariants_tokens,
             )
         prompt = self._build_chat_prompt(
             strategy=strategy,
@@ -477,6 +566,7 @@ class LLMAgent:
             profile_id=profile_id,
             profile_text=profile_text,
             task_state_text=task_state_text,
+            invariants_text=invariants_text,
             include_memory_layers=include_memory_layers,
         )
         started = perf_counter()
@@ -504,6 +594,7 @@ class LLMAgent:
                 context_limit=context_limit,
                 include_memory_layers=include_memory_layers,
                 profile_id=profile_id,
+                invariant_tokens=invariants_tokens,
             )
         return self._success_response(
             text=text,
@@ -522,6 +613,7 @@ class LLMAgent:
             context_limit=context_limit,
             include_memory_layers=include_memory_layers,
             profile_id=profile_id,
+            invariant_tokens=invariants_tokens,
         )
 
     def _success_response(
@@ -542,6 +634,7 @@ class LLMAgent:
         context_limit: int,
         include_memory_layers: bool,
         profile_id: str,
+        invariant_tokens: int = 0,
     ) -> AgentResponse:
         input_tokens = int(usage.get("input_tokens", 0))
         output_tokens = int(usage.get("output_tokens", 0))
@@ -570,6 +663,9 @@ class LLMAgent:
             include_memory_layers=include_memory_layers,
             profile_id=profile_id,
             overflowed=False,
+            invariant_tokens=invariant_tokens,
+            blocked_by_invariants=False,
+            invariant_report="",
         )
 
     def _error_response(
@@ -589,6 +685,7 @@ class LLMAgent:
         context_limit: int,
         include_memory_layers: bool,
         profile_id: str,
+        invariant_tokens: int = 0,
     ) -> AgentResponse:
         latency_ms = int((perf_counter() - started) * 1000)
         return AgentResponse(
@@ -613,6 +710,9 @@ class LLMAgent:
             include_memory_layers=include_memory_layers,
             profile_id=profile_id,
             overflowed=False,
+            invariant_tokens=invariant_tokens,
+            blocked_by_invariants=False,
+            invariant_report="",
         )
 
     def _overflow_response(
@@ -630,6 +730,7 @@ class LLMAgent:
         context_limit: int,
         include_memory_layers: bool,
         profile_id: str,
+        invariant_tokens: int = 0,
     ) -> AgentResponse:
         return AgentResponse(
             text="Error: estimated context exceeds model limit. Use smaller window or reduce memory.",
@@ -653,6 +754,9 @@ class LLMAgent:
             include_memory_layers=include_memory_layers,
             profile_id=profile_id,
             overflowed=True,
+            invariant_tokens=invariant_tokens,
+            blocked_by_invariants=False,
+            invariant_report="",
         )
 
     def _select_history_for_strategy(self, history: list[dict], strategy: str, window_n: int) -> list[dict]:
@@ -671,11 +775,15 @@ class LLMAgent:
         profile_id: str,
         profile_text: str,
         task_state_text: str,
+        invariants_text: str,
         include_memory_layers: bool,
     ) -> str:
         lines = [
             "You are a helpful assistant in a multi-turn chat.",
             "Respect existing decisions and constraints from context.",
+            "You are NOT allowed to violate active invariants.",
+            "If user request conflicts with invariants, refuse and explain exactly which invariant is violated.",
+            "Always include a short 'Invariant Check:' line before your final answer.",
             f"Context strategy: {strategy}",
             f"Memory layers enabled: {'yes' if include_memory_layers else 'no'}",
             f"Active user profile: {profile_id}",
@@ -683,6 +791,8 @@ class LLMAgent:
             profile_text or "- empty",
             "Task state machine:",
             task_state_text or "- empty",
+            "Active invariants:",
+            invariants_text or "- none",
         ]
         if include_memory_layers:
             lines.extend(["", "Working memory (current task):", working_memory_text or "- empty"])
@@ -697,6 +807,143 @@ class LLMAgent:
             lines.append(f"{speaker}: {content}")
         lines.extend(["", f"User: {user_message.strip()}", "Assistant:"])
         return "\n".join(lines)
+
+    def _invariants_to_text(self, invariants: list[dict[str, str | bool]]) -> str:
+        if not invariants:
+            return ""
+        lines: list[str] = []
+        for item in invariants:
+            inv_id = str(item.get("id", "")).strip()
+            category = str(item.get("category", "general")).strip()
+            text = str(item.get("text", "")).strip()
+            if inv_id and text:
+                lines.append(f"- [{inv_id}] ({category}) {text}")
+        return "\n".join(lines)
+
+    def _detect_invariant_violations(
+        self,
+        user_message: str,
+        invariants: list[dict[str, str | bool]],
+    ) -> list[dict[str, str]]:
+        if not invariants:
+            return []
+        message = user_message.strip().lower()
+        if not message:
+            return []
+        violations: list[dict[str, str]] = []
+        bypass_words = ("игнорируй", "обойди", "наруш", "ignore", "bypass", "override")
+        if "инвариант" in message and any(word in message for word in bypass_words):
+            for item in invariants[:3]:
+                violations.append(
+                    {
+                        "id": str(item.get("id", "")),
+                        "category": str(item.get("category", "general")),
+                        "text": str(item.get("text", "")),
+                    }
+                )
+            return violations
+        for item in invariants:
+            text = str(item.get("text", "")).lower()
+            if not text:
+                continue
+            if self._message_conflicts_with_invariant(message, text):
+                violations.append(
+                    {
+                        "id": str(item.get("id", "")),
+                        "category": str(item.get("category", "general")),
+                        "text": str(item.get("text", "")),
+                    }
+                )
+        return violations[:3]
+
+    def _message_conflicts_with_invariant(self, message: str, invariant_text: str) -> bool:
+        tech_words = (
+            "python", "flask", "fastapi", "django", "node", "nodejs", "express",
+            "react", "vue", "angular", "java", "kotlin", "go", "rust",
+            "postgres", "mysql", "mongodb", "redis",
+        )
+        action_words = ("использ", "добав", "перепиш", "мигрир", "use", "add", "rewrite", "migrate")
+        if not any(word in message for word in action_words):
+            return False
+        forbidden_markers = ("запрещ", "нельзя", "не использовать", "без ", "do not use", "forbidden")
+        for marker in forbidden_markers:
+            if marker in invariant_text:
+                for tech in tech_words:
+                    if tech in invariant_text and tech in message:
+                        return True
+        only_markers = ("только", "only", "используем", "стек")
+        if any(marker in invariant_text for marker in only_markers):
+            allowed = [tech for tech in tech_words if tech in invariant_text]
+            requested = [tech for tech in tech_words if tech in message]
+            if allowed and requested and any(tech not in allowed for tech in requested):
+                return True
+        return False
+
+    def _invariant_blocked_response(
+        self,
+        model: str,
+        strategy: str,
+        branch: str,
+        current_request_tokens: int,
+        full_history_tokens: int,
+        effective_history_tokens: int,
+        working_tokens: int,
+        long_term_tokens: int,
+        profile_tokens: int,
+        context_limit: int,
+        include_memory_layers: bool,
+        profile_id: str,
+        violations: list[dict[str, str]],
+    ) -> AgentResponse:
+        violation_lines = []
+        for item in violations:
+            inv_id = item.get("id", "")
+            category = item.get("category", "general")
+            text = item.get("text", "")
+            violation_lines.append(f"- [{inv_id}] ({category}) {text}")
+        report = "\n".join(violation_lines) if violation_lines else "- No details."
+        text = (
+            "Invariant Check: conflict detected.\n"
+            "I cannot propose this solution because it violates active invariants.\n"
+            "Violated invariants:\n"
+            f"{report}\n\n"
+            "Please rephrase the request so it stays within these constraints."
+        )
+        invariant_tokens = self._estimate_tokens(report)
+        context_tokens = (
+            current_request_tokens
+            + effective_history_tokens
+            + working_tokens
+            + long_term_tokens
+            + profile_tokens
+            + invariant_tokens
+        )
+        return AgentResponse(
+            text=text,
+            used_model=model,
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            latency_ms=0,
+            cost_text="N/A",
+            strategy=strategy,
+            branch=branch,
+            current_request_tokens=current_request_tokens,
+            history_tokens_full=full_history_tokens,
+            history_tokens_effective=effective_history_tokens,
+            facts_tokens=working_tokens,
+            working_tokens=working_tokens,
+            long_term_tokens=long_term_tokens,
+            profile_tokens=profile_tokens,
+            context_tokens_estimate=context_tokens,
+            context_limit_tokens=context_limit,
+            include_memory_layers=include_memory_layers,
+            profile_id=profile_id,
+            overflowed=False,
+            invariant_tokens=invariant_tokens,
+            blocked_by_invariants=True,
+            invariant_report=report,
+        )
 
     def _update_facts(self, facts: dict[str, str], user_message: str) -> None:
         text = user_message.strip()
@@ -821,6 +1068,7 @@ class LLMAgent:
             "active_branch": "main",
             "active_profile": "default",
             "long_term_memory": {},
+            "invariants": {},
             "profiles": {"default": self._empty_profile()},
             "branches": {"main": self._empty_branch()},
         }
@@ -883,6 +1131,7 @@ class LLMAgent:
             return self._default_state()
         long_term_memory = self._normalize_memory_map(parsed.get("long_term_memory", {}), 80)
         profiles = self._normalize_profiles(parsed.get("profiles", {}))
+        invariants = self._normalize_invariants(parsed.get("invariants", {}))
         normalized_branches: dict[str, dict] = {}
         for name, branch in branches.items():
             if not isinstance(name, str) or not isinstance(branch, dict):
@@ -913,6 +1162,7 @@ class LLMAgent:
             "active_branch": active,
             "active_profile": active_profile,
             "long_term_memory": long_term_memory,
+            "invariants": invariants,
             "profiles": profiles,
             "branches": normalized_branches,
         }
@@ -933,6 +1183,30 @@ class LLMAgent:
             state["profiles"][profile_id] = self._empty_profile()
         profile = state["profiles"][profile_id]
         return profile if isinstance(profile, dict) else self._empty_profile()
+
+    def _get_enabled_invariants(self, state: dict) -> list[dict[str, str | bool]]:
+        raw = state.get("invariants", {})
+        if not isinstance(raw, dict):
+            return []
+        rows: list[dict[str, str | bool]] = []
+        for inv_id in sorted(raw.keys()):
+            item = raw.get(inv_id, {})
+            if not isinstance(item, dict):
+                continue
+            if not bool(item.get("enabled", True)):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            rows.append(
+                {
+                    "id": inv_id,
+                    "category": str(item.get("category", "general")).strip() or "general",
+                    "text": text,
+                    "enabled": True,
+                }
+            )
+        return rows
 
     def _ensure_task_state(self, branch: dict) -> dict[str, object]:
         task_state = self._normalize_task_state(branch.get("task_state", {}))
@@ -986,6 +1260,24 @@ class LLMAgent:
                 }
         if "default" not in normalized:
             normalized["default"] = self._empty_profile()
+        return normalized
+
+    def _normalize_invariants(self, raw: object) -> dict[str, dict[str, str | bool]]:
+        if not isinstance(raw, dict):
+            return {}
+        normalized: dict[str, dict[str, str | bool]] = {}
+        for inv_id, invariant in raw.items():
+            iid = self._normalize_memory_key(str(inv_id))
+            if not iid or not isinstance(invariant, dict):
+                continue
+            text = str(invariant.get("text", "")).strip()[:240]
+            if not text:
+                continue
+            normalized[iid] = {
+                "category": str(invariant.get("category", "general")).strip()[:40] or "general",
+                "text": text,
+                "enabled": bool(invariant.get("enabled", True)),
+            }
         return normalized
 
     def _normalize_checkpoints(self, checkpoints: object, max_messages: int) -> list[dict]:

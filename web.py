@@ -67,6 +67,9 @@ def as_result_view(response) -> dict:
         "include_memory_layers": response.include_memory_layers,
         "profile_id": response.profile_id,
         "overflowed": response.overflowed,
+        "invariant_tokens": response.invariant_tokens,
+        "blocked_by_invariants": response.blocked_by_invariants,
+        "invariant_report": response.invariant_report,
     }
 
 
@@ -147,6 +150,9 @@ def index():
     memory_layer = "working"
     memory_key = ""
     memory_value = ""
+    invariant_id = ""
+    invariant_category = "general"
+    invariant_text = ""
     checkpoint_label = ""
     new_branch_name = ""
     source_checkpoint_id = ""
@@ -163,6 +169,7 @@ def index():
     short_term_memory = agent.short_term_memory(parse_window(window_n, 8), active_branch)
     working_memory = agent.load_working_memory(active_branch)
     long_term_memory = agent.load_long_term_memory()
+    invariants = agent.load_invariants()
     active_profile_data = agent.load_profile(selected_profile)
     profile_style = active_profile_data.get("style", "")
     profile_format = active_profile_data.get("format", "")
@@ -204,6 +211,9 @@ def index():
         memory_layer = request.form.get("memory_layer", "working").strip().lower()
         memory_key = request.form.get("memory_key", "").strip()
         memory_value = request.form.get("memory_value", "").strip()
+        invariant_id = request.form.get("invariant_id", "").strip()
+        invariant_category = request.form.get("invariant_category", "general").strip().lower()
+        invariant_text = request.form.get("invariant_text", "").strip()
         checkpoint_label = request.form.get("checkpoint_label", "").strip()
         new_branch_name = request.form.get("new_branch_name", "").strip()
         source_checkpoint_id = request.form.get("source_checkpoint_id", "").strip()
@@ -273,6 +283,17 @@ def index():
                 branch_id=selected_branch,
             )
             status = message if ok else f"Delete memory failed: {message}"
+        elif action == "save_invariant":
+            ok, message = agent.save_invariant(
+                invariant_id=invariant_id,
+                category=invariant_category,
+                text=invariant_text,
+                enabled=True,
+            )
+            status = message if ok else f"Save invariant failed: {message}"
+        elif action == "delete_invariant":
+            ok, message = agent.delete_invariant(invariant_id)
+            status = message if ok else f"Delete invariant failed: {message}"
         elif action == "switch_branch":
             if agent.switch_branch(selected_branch):
                 status = f"Switched to branch: {selected_branch}"
@@ -403,6 +424,7 @@ def index():
         short_term_memory = agent.short_term_memory(parsed_window, active_branch)
         working_memory = agent.load_working_memory(active_branch)
         long_term_memory = agent.load_long_term_memory()
+        invariants = agent.load_invariants()
         active_profile_data = agent.load_profile(selected_profile)
         profile_style = active_profile_data.get("style", "")
         profile_format = active_profile_data.get("format", "")
@@ -445,6 +467,9 @@ def index():
         memory_layer=memory_layer,
         memory_key=memory_key,
         memory_value=memory_value,
+        invariant_id=invariant_id,
+        invariant_category=invariant_category,
+        invariant_text=invariant_text,
         checkpoint_label=checkpoint_label,
         new_branch_name=new_branch_name,
         source_checkpoint_id=source_checkpoint_id,
@@ -459,6 +484,7 @@ def index():
         short_term_memory=short_term_memory,
         working_memory=working_memory,
         long_term_memory=long_term_memory,
+        invariants=invariants,
         checkpoints=checkpoints,
         history=history,
         token_growth=token_growth,
