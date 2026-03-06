@@ -248,14 +248,22 @@ class LLMAgent:
             return False, f"Unknown stage: {stage}"
         state = self._load_state()
         branch = self._get_branch(state, branch_id or state["active_branch"])
-        branch["task_state"] = {
-            "stage": normalized_stage,
-            "current_step": current_step.strip()[:220],
-            "expected_action": expected_action.strip()[:220],
-            "paused": bool(branch.get("task_state", {}).get("paused", False)),
-        }
+        task_state = self._ensure_task_state(branch)
+        current_stage = str(task_state.get("stage", "planning")).strip().lower()
+        if normalized_stage != current_stage:
+            ok, reason = self._can_transition(task_state, current_stage, normalized_stage)
+            if not ok:
+                return False, reason
+            self._apply_stage_defaults(task_state, normalized_stage)
+            task_state["stage"] = normalized_stage
+        cleaned_step = current_step.strip()[:220]
+        cleaned_action = expected_action.strip()[:220]
+        if cleaned_step:
+            task_state["current_step"] = cleaned_step
+        if cleaned_action:
+            task_state["expected_action"] = cleaned_action
         self._save_state(state)
-        return True, f"Task state updated: {normalized_stage}"
+        return True, f"Task state updated: {task_state['stage']}"
 
     def pause_task(self, branch_id: str | None = None) -> tuple[bool, str]:
         state = self._load_state()
@@ -278,22 +286,42 @@ class LLMAgent:
         branch = self._get_branch(state, branch_id or state["active_branch"])
         task_state = self._ensure_task_state(branch)
         current = str(task_state.get("stage", "planning")).strip().lower()
-        flow = ["planning", "execution", "validation", "done"]
+        flow = self._stage_flow()
         if current not in flow:
             current = "planning"
         idx = flow.index(current)
         if idx == len(flow) - 1:
             return False, "Task already at final stage: done"
         next_stage = flow[idx + 1]
+        ok, reason = self._can_transition(task_state, current, next_stage)
+        if not ok:
+            return False, reason
+        self._apply_stage_defaults(task_state, next_stage)
         task_state["stage"] = next_stage
-        if next_stage == "execution":
-            task_state["expected_action"] = "Implement planned solution."
-        elif next_stage == "validation":
-            task_state["expected_action"] = "Validate output and compare with requirements."
-        elif next_stage == "done":
-            task_state["expected_action"] = "Finalize result and summarize."
         self._save_state(state)
         return True, f"Task moved to: {next_stage}"
+
+    def approve_plan(self, branch_id: str | None = None) -> tuple[bool, str]:
+        state = self._load_state()
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        task_state = self._ensure_task_state(branch)
+        stage = str(task_state.get("stage", "planning")).strip().lower()
+        if stage != "planning":
+            return False, "Plan approval is allowed only at planning stage."
+        task_state["plan_approved"] = True
+        self._save_state(state)
+        return True, "Plan approved. Transition to execution is now allowed."
+
+    def pass_validation(self, branch_id: str | None = None) -> tuple[bool, str]:
+        state = self._load_state()
+        branch = self._get_branch(state, branch_id or state["active_branch"])
+        task_state = self._ensure_task_state(branch)
+        stage = str(task_state.get("stage", "planning")).strip().lower()
+        if stage != "validation":
+            return False, "Validation pass can be marked only at validation stage."
+        task_state["validation_passed"] = True
+        self._save_state(state)
+        return True, "Validation marked as passed. Transition to done is now allowed."
 
     def set_memory_item(
         self,
@@ -995,12 +1023,19 @@ class LLMAgent:
         current_step = str(task_state.get("current_step", "")).strip()
         expected_action = str(task_state.get("expected_action", "")).strip()
         paused = bool(task_state.get("paused", False))
+        plan_approved = bool(task_state.get("plan_approved", False))
+        validation_passed = bool(task_state.get("validation_passed", False))
         lines = [
             f"- stage: {stage}",
             f"- current_step: {current_step or 'not set'}",
             f"- expected_action: {expected_action or 'not set'}",
             f"- paused: {'yes' if paused else 'no'}",
+            f"- plan_approved: {'yes' if plan_approved else 'no'}",
+            f"- validation_passed: {'yes' if validation_passed else 'no'}",
             "- workflow: planning -> execution -> validation -> done",
+            "- transition rule: no stage jumps; only one-step forward transitions",
+            "- gate rule: planning->execution requires plan_approved=yes",
+            "- gate rule: validation->done requires validation_passed=yes",
         ]
         return "\n".join(lines)
 
@@ -1090,11 +1125,48 @@ class LLMAgent:
             "current_step": "Collect requirements and outline plan.",
             "expected_action": "Provide or confirm plan details.",
             "paused": False,
+            "plan_approved": False,
+            "validation_passed": False,
         }
+
+    def _stage_flow(self) -> tuple[str, ...]:
+        return ("planning", "execution", "validation", "done")
+
+    def _can_transition(self, task_state: dict[str, object], current: str, target: str) -> tuple[bool, str]:
+        if target == current:
+            return True, "No stage change."
+        if bool(task_state.get("paused", False)):
+            return False, "Cannot change stage while task is paused. Resume first."
+        flow = self._stage_flow()
+        if current not in flow or target not in flow:
+            return False, f"Unsupported transition: {current} -> {target}"
+        current_idx = flow.index(current)
+        target_idx = flow.index(target)
+        if target_idx != current_idx + 1:
+            return False, f"Stage jump is not allowed: {current} -> {target}"
+        if current == "planning" and target == "execution":
+            if not bool(task_state.get("plan_approved", False)):
+                return False, "Transition blocked: approve plan before execution."
+        if current == "validation" and target == "done":
+            if not bool(task_state.get("validation_passed", False)):
+                return False, "Transition blocked: mark validation as passed before done."
+        return True, "Transition allowed."
+
+    def _apply_stage_defaults(self, task_state: dict[str, object], stage: str) -> None:
+        if stage == "execution":
+            task_state["expected_action"] = "Implement planned solution."
+            task_state["current_step"] = "Start implementation based on approved plan."
+        elif stage == "validation":
+            task_state["expected_action"] = "Validate output and compare with requirements."
+            task_state["current_step"] = "Run checks and review implementation quality."
+            task_state["validation_passed"] = False
+        elif stage == "done":
+            task_state["expected_action"] = "Finalize result and summarize."
+            task_state["current_step"] = "Prepare final summary and handoff."
 
     def _normalize_stage(self, stage: str) -> str:
         normalized = stage.strip().lower()
-        return normalized if normalized in {"planning", "execution", "validation", "done"} else ""
+        return normalized if normalized in self._stage_flow() else ""
 
     def _normalize_task_state(self, raw: object) -> dict[str, object]:
         if not isinstance(raw, dict):
@@ -1103,6 +1175,12 @@ class LLMAgent:
         current_step = str(raw.get("current_step", "")).strip()[:220]
         expected_action = str(raw.get("expected_action", "")).strip()[:220]
         paused = bool(raw.get("paused", False))
+        plan_approved = bool(raw.get("plan_approved", False))
+        validation_passed = bool(raw.get("validation_passed", False))
+        if stage in {"execution", "validation", "done"}:
+            plan_approved = True
+        if stage == "done":
+            validation_passed = True
         if not current_step:
             current_step = self._default_task_state()["current_step"]
         if not expected_action:
@@ -1112,6 +1190,8 @@ class LLMAgent:
             "current_step": current_step,
             "expected_action": expected_action,
             "paused": paused,
+            "plan_approved": plan_approved,
+            "validation_passed": validation_passed,
         }
 
     def _load_state(self) -> dict:

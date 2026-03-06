@@ -245,6 +245,12 @@ def index():
         elif action == "advance_task_stage":
             ok, message = agent.advance_task_stage(selected_branch)
             status = message if ok else f"Advance stage failed: {message}"
+        elif action == "approve_plan":
+            ok, message = agent.approve_plan(selected_branch)
+            status = message if ok else f"Approve plan failed: {message}"
+        elif action == "pass_validation":
+            ok, message = agent.pass_validation(selected_branch)
+            status = message if ok else f"Pass validation failed: {message}"
         elif action == "pause_task":
             ok, message = agent.pause_task(selected_branch)
             status = message if ok else f"Pause failed: {message}"
@@ -440,7 +446,7 @@ def index():
             active_branch = branches[0]
 
     return render_template(
-        "index.html",
+        "index_modern.html",
         prompt=prompt,
         model_options=model_options,
         selected_model=selected_model,
