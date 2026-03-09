@@ -6,6 +6,7 @@ from flask import Flask, render_template, request
 from anthropic_client import get_available_models
 from anthropic_client import get_model_override
 from llm_agent import LLMAgent
+from mcp_list_tools import list_mcp_tools_sync
 
 app = Flask(__name__)
 agent = LLMAgent()
@@ -161,6 +162,10 @@ def index():
     compare_result = {}
     compare_memory_result = {}
     compare_profiles_result = {}
+    mcp_status = ""
+    mcp_tools: list[dict[str, str]] = []
+    public_mcp_status = ""
+    public_mcp_tools: list[dict[str, str]] = []
 
     active_branch = agent.get_active_branch()
     selected_branch = active_branch
@@ -403,6 +408,24 @@ def index():
                 status = "Compared answers for two profiles."
             else:
                 status = "Prompt is empty."
+        elif action == "test_mcp":
+            try:
+                tools = list_mcp_tools_sync()
+                mcp_tools = [{"name": name, "description": description} for name, description in tools]
+                mcp_status = "MCP connection: OK"
+                status = f"MCP tools loaded: {len(mcp_tools)}"
+            except Exception as exc:
+                mcp_status = f"MCP connection failed: {exc}"
+                status = mcp_status
+        elif action == "test_public_mcp":
+            try:
+                tools = list_mcp_tools_sync(["npx", "-y", "@modelcontextprotocol/server-everything"])
+                public_mcp_tools = [{"name": name, "description": description} for name, description in tools]
+                public_mcp_status = "Public MCP connection: OK"
+                status = f"Public MCP tools loaded: {len(public_mcp_tools)}"
+            except Exception as exc:
+                public_mcp_status = f"Public MCP connection failed: {exc}"
+                status = public_mcp_status
         elif action == "send":
             if prompt:
                 response = agent.run_chat_persistent(
@@ -484,6 +507,10 @@ def index():
         compare_result=compare_result,
         compare_memory_result=compare_memory_result,
         compare_profiles_result=compare_profiles_result,
+        mcp_status=mcp_status,
+        mcp_tools=mcp_tools,
+        public_mcp_status=public_mcp_status,
+        public_mcp_tools=public_mcp_tools,
         active_branch=active_branch,
         selected_branch=selected_branch,
         branches=branches,

@@ -3,6 +3,7 @@
 Мини-проект для демонстрации первого запроса к LLM через API:
 - CLI режим (`python3 cli.py`)
 - Web режим (`python3 web.py`)
+- MCP demo (`python3 mcp_list_tools.py`)
 
 ## 1) Setup
 
@@ -65,3 +66,27 @@ git push -u origin main
 ## Security note
 
 Вы уже отправили API-ключ в чат. Для безопасности отзовите старый ключ в Anthropic Console и создайте новый.
+
+## MCP: minimal connection + tool listing
+
+Локальный сценарий (без внешнего MCP):
+
+```bash
+python3 mcp_list_tools.py
+```
+
+Ожидаемый результат:
+- `MCP connection: OK`
+- список инструментов (например: `ping`, `sum_two_numbers`)
+
+Подключение к другому MCP-серверу:
+
+```bash
+python3 mcp_list_tools.py <command> [args...]
+```
+
+Пример:
+
+```bash
+python3 mcp_list_tools.py python3 mcp_local_server.py
+```

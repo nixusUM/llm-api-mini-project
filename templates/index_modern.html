@@ -407,6 +407,30 @@
               <input type="checkbox" name="include_memory_layers" {% if include_memory_layers %}checked{% endif %}>
               Use memory layers in prompt
             </label>
+            <div class="btn-row" style="margin-top: 10px;">
+              <button type="submit" name="action" value="test_mcp" formnovalidate class="btn-secondary">Test MCP connection</button>
+              <button type="submit" name="action" value="test_public_mcp" formnovalidate class="btn-secondary">Test Public MCP</button>
+            </div>
+            {% if mcp_status %}
+            <div class="hint" style="margin-top: 8px;">
+              <strong>{{ mcp_status }}</strong><br>
+              {% if mcp_tools %}
+                {% for tool in mcp_tools %}
+                - {{ tool.name }}: {{ tool.description }}<br>
+                {% endfor %}
+              {% endif %}
+            </div>
+            {% endif %}
+            {% if public_mcp_status %}
+            <div class="hint" style="margin-top: 8px;">
+              <strong>{{ public_mcp_status }}</strong><br>
+              {% if public_mcp_tools %}
+                {% for tool in public_mcp_tools %}
+                - {{ tool.name }}: {{ tool.description }}<br>
+                {% endfor %}
+              {% endif %}
+            </div>
+            {% endif %}
           </div>
         </details>
 
@@ -639,6 +663,26 @@
               {% endfor %}
             </ul>
           </div>
+          {% if mcp_status %}
+          <div class="section-content">
+            <label>MCP tools (current check)</label>
+            <ul class="list">
+              {% for tool in mcp_tools %}
+              <li><strong>{{ tool.name }}</strong>: {{ tool.description }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+          {% if public_mcp_status %}
+          <div class="section-content">
+            <label>Public MCP tools (current check)</label>
+            <ul class="list">
+              {% for tool in public_mcp_tools %}
+              <li><strong>{{ tool.name }}</strong>: {{ tool.description }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
         </div>
 
         <div class="tab-panel" data-tab-panel="metrics">
