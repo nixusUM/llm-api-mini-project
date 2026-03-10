@@ -6,6 +6,7 @@ from flask import Flask, render_template, request
 from anthropic_client import get_available_models
 from anthropic_client import get_model_override
 from llm_agent import LLMAgent
+from mcp_list_tools import call_mcp_tool_sync
 from mcp_list_tools import list_mcp_tools_sync
 
 app = Flask(__name__)
@@ -166,6 +167,8 @@ def index():
     mcp_tools: list[dict[str, str]] = []
     public_mcp_status = ""
     public_mcp_tools: list[dict[str, str]] = []
+    mcp_todo_id = "1"
+    mcp_tool_result = ""
 
     active_branch = agent.get_active_branch()
     selected_branch = active_branch
@@ -222,6 +225,7 @@ def index():
         checkpoint_label = request.form.get("checkpoint_label", "").strip()
         new_branch_name = request.form.get("new_branch_name", "").strip()
         source_checkpoint_id = request.form.get("source_checkpoint_id", "").strip()
+        mcp_todo_id = request.form.get("mcp_todo_id", "1").strip() or "1"
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -426,6 +430,28 @@ def index():
             except Exception as exc:
                 public_mcp_status = f"Public MCP connection failed: {exc}"
                 status = public_mcp_status
+        elif action == "run_mcp_todo_tool":
+            try:
+                todo_id = int(mcp_todo_id)
+            except ValueError:
+                todo_id = 1
+            tool_result = call_mcp_tool_sync(
+                tool_name="get_todo_from_mock_api",
+                arguments={"todo_id": todo_id},
+            )
+            mcp_tool_result = str(tool_result.get("text", "")).strip()
+            if not mcp_tool_result and tool_result.get("structured"):
+                mcp_tool_result = str(tool_result.get("structured"))
+            if tool_result.get("ok"):
+                status = "MCP tool get_todo_from_mock_api executed successfully."
+                if mcp_tool_result:
+                    prompt = (
+                        "Use this MCP tool result as factual input:\n"
+                        f"{mcp_tool_result}\n\n"
+                        "Summarize key details in 3 bullet points."
+                    )
+            else:
+                status = "MCP tool execution failed."
         elif action == "send":
             if prompt:
                 response = agent.run_chat_persistent(
@@ -511,6 +537,8 @@ def index():
         mcp_tools=mcp_tools,
         public_mcp_status=public_mcp_status,
         public_mcp_tools=public_mcp_tools,
+        mcp_todo_id=mcp_todo_id,
+        mcp_tool_result=mcp_tool_result,
         active_branch=active_branch,
         selected_branch=selected_branch,
         branches=branches,

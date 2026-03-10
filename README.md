@@ -90,3 +90,19 @@ python3 mcp_list_tools.py <command> [args...]
 ```bash
 python3 mcp_list_tools.py python3 mcp_local_server.py
 ```
+
+## First MCP tool (mock API)
+
+В локальном MCP-сервере добавлен инструмент:
+- `get_todo_from_mock_api(todo_id: int)` — получает todo из JSONPlaceholder.
+
+Пример CLI-вызова инструмента через MCP-клиент:
+
+```bash
+python3 mcp_list_tools.py --call get_todo_from_mock_api '{"todo_id": 3}'
+```
+
+В web UI:
+- кнопка `Run MCP tool: get_todo_from_mock_api`
+- параметр `todo_id`
+- результат подставляется в поле сообщения, чтобы агент мог его использовать.

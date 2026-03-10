@@ -431,6 +431,17 @@
               {% endif %}
             </div>
             {% endif %}
+            <div class="field" style="margin-top: 10px;">
+              <label for="mcp_todo_id">MCP tool param: todo_id</label>
+              <input id="mcp_todo_id" name="mcp_todo_id" value="{{ mcp_todo_id }}">
+            </div>
+            <button type="submit" name="action" value="run_mcp_todo_tool" formnovalidate class="btn-secondary">Run MCP tool: get_todo_from_mock_api</button>
+            {% if mcp_tool_result %}
+            <div class="hint" style="margin-top: 8px; white-space: pre-wrap;">
+              <strong>MCP tool result</strong><br>
+              {{ mcp_tool_result }}
+            </div>
+            {% endif %}
           </div>
         </details>
 
