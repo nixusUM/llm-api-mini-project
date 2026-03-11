@@ -106,3 +106,22 @@ python3 mcp_list_tools.py --call get_todo_from_mock_api '{"todo_id": 3}'
 - кнопка `Run MCP tool: get_todo_from_mock_api`
 - параметр `todo_id`
 - результат подставляется в поле сообщения, чтобы агент мог его использовать.
+
+## MCP scheduler and background summaries (24/7)
+
+В локальном MCP-сервере добавлены инструменты планировщика:
+- `configure_periodic_summary(job_id, interval_seconds, user_id, enabled)`
+- `run_due_summaries()`
+- `get_summary_report(limit)`
+
+Что делает:
+- сохраняет состояние задач и историю запусков в `data/mcp_periodic_state.json`
+- выполняет задачи по расписанию
+- возвращает агрегированную сводку (runs + average completion rate)
+
+В web UI:
+- `Configure periodic job`
+- `Run periodic tick now`
+- `Start 24/7 scheduler` / `Stop`
+
+Фоновый планировщик в приложении периодически вызывает MCP-инструменты и обновляет сводку.

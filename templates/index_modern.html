@@ -262,7 +262,7 @@
 
     .tabs {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 6px;
       margin-bottom: 8px;
     }
@@ -411,26 +411,6 @@
               <button type="submit" name="action" value="test_mcp" formnovalidate class="btn-secondary">Test MCP connection</button>
               <button type="submit" name="action" value="test_public_mcp" formnovalidate class="btn-secondary">Test Public MCP</button>
             </div>
-            {% if mcp_status %}
-            <div class="hint" style="margin-top: 8px;">
-              <strong>{{ mcp_status }}</strong><br>
-              {% if mcp_tools %}
-                {% for tool in mcp_tools %}
-                - {{ tool.name }}: {{ tool.description }}<br>
-                {% endfor %}
-              {% endif %}
-            </div>
-            {% endif %}
-            {% if public_mcp_status %}
-            <div class="hint" style="margin-top: 8px;">
-              <strong>{{ public_mcp_status }}</strong><br>
-              {% if public_mcp_tools %}
-                {% for tool in public_mcp_tools %}
-                - {{ tool.name }}: {{ tool.description }}<br>
-                {% endfor %}
-              {% endif %}
-            </div>
-            {% endif %}
             <div class="field" style="margin-top: 10px;">
               <label for="mcp_todo_id">MCP tool param: todo_id</label>
               <input id="mcp_todo_id" name="mcp_todo_id" value="{{ mcp_todo_id }}">
@@ -442,6 +422,40 @@
               {{ mcp_tool_result }}
             </div>
             {% endif %}
+            <div class="field" style="margin-top: 10px;">
+              <label for="periodic_job_id">Periodic job id</label>
+              <input id="periodic_job_id" name="periodic_job_id" value="{{ periodic_job_id }}">
+            </div>
+            <div class="row-2">
+              <div class="field">
+                <label for="periodic_interval_seconds">Interval seconds</label>
+                <input id="periodic_interval_seconds" name="periodic_interval_seconds" value="{{ periodic_interval_seconds }}">
+              </div>
+              <div class="field">
+                <label for="periodic_user_id">User id (mock API)</label>
+                <input id="periodic_user_id" name="periodic_user_id" value="{{ periodic_user_id }}">
+              </div>
+            </div>
+            <div class="btn-row">
+              <button type="submit" name="action" value="configure_periodic_summary" formnovalidate class="btn-secondary">Configure periodic job</button>
+              <button type="submit" name="action" value="run_periodic_tick" formnovalidate class="btn-secondary">Run periodic tick now</button>
+            </div>
+            <div class="row-2" style="margin-top: 8px;">
+              <div class="field">
+                <label for="scheduler_poll_seconds">Scheduler poll seconds</label>
+                <input id="scheduler_poll_seconds" name="scheduler_poll_seconds" value="{{ scheduler_poll_seconds }}">
+              </div>
+              <div class="field" style="display:flex;align-items:flex-end;">
+                <div class="btn-row" style="width:100%;margin-top:0;">
+                  <button type="submit" name="action" value="start_scheduler" formnovalidate class="btn-secondary">Start 24/7 scheduler</button>
+                  <button type="submit" name="action" value="stop_scheduler" formnovalidate>Stop</button>
+                </div>
+              </div>
+            </div>
+            <div class="btn-row" style="margin-top: 8px;">
+              <button type="submit" name="action" value="refresh_scheduler" formnovalidate class="btn-secondary">Refresh scheduler data</button>
+              <span></span>
+            </div>
           </div>
         </details>
 
@@ -636,6 +650,7 @@
           <button type="button" class="tab-btn active" data-tab="snapshot">Snapshot</button>
           <button type="button" class="tab-btn" data-tab="metrics">Metrics</button>
           <button type="button" class="tab-btn" data-tab="compare">Compare</button>
+          <button type="button" class="tab-btn" data-tab="scheduler">Scheduler</button>
           <button type="button" class="tab-btn" data-tab="guide">Guide</button>
         </div>
 
@@ -801,6 +816,30 @@
           {% endif %}
         </div>
 
+        <div class="tab-panel" data-tab-panel="scheduler">
+          <div class="section-content">
+            <div class="stats">
+              Running: <strong id="scheduler-running">{{ "yes" if scheduler_state.running else "no" }}</strong><br>
+              Poll seconds: <strong id="scheduler-poll-seconds">{{ scheduler_state.poll_seconds }}</strong><br>
+              Last tick at: <strong id="scheduler-last-tick">{{ scheduler_state.last_tick_at or "-" }}</strong><br>
+              Last status: <strong id="scheduler-last-status">{{ scheduler_state.last_status or "-" }}</strong>
+            </div>
+            <div class="btn-row" style="margin-top: 10px;">
+              <button type="submit" name="action" value="refresh_scheduler" formnovalidate class="btn-secondary">Refresh scheduler data</button>
+              <span></span>
+            </div>
+          </div>
+          <div class="section-content">
+            <label>Periodic summary report</label>
+            {% if periodic_summary_result %}
+            <pre id="scheduler-report" style="margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font-size: 12px;">{{ periodic_summary_result }}</pre>
+            {% else %}
+            <div class="hint" id="scheduler-empty-hint">No periodic summary yet. Configure a periodic job, run a tick, or start scheduler.</div>
+            <pre id="scheduler-report" style="display:none; margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font-size: 12px;"></pre>
+            {% endif %}
+          </div>
+        </div>
+
         <div class="tab-panel" data-tab-panel="guide">
           <div class="hint">
             1) Save 2-4 invariants (stack, architecture, business rule).<br>
@@ -854,12 +893,18 @@
 
     const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
     const tabPanels = Array.from(document.querySelectorAll(".tab-panel"));
+    const activeTabStorageKey = "assistant-ui-active-tab";
+    const activateTab = (target) => {
+      tabButtons.forEach((b) => b.classList.toggle("active", b.dataset.tab === target));
+      tabPanels.forEach((p) => p.classList.toggle("active", p.dataset.tabPanel === target));
+      localStorage.setItem(activeTabStorageKey, target);
+    };
+    const savedTab = localStorage.getItem(activeTabStorageKey);
+    if (savedTab && tabButtons.some((b) => b.dataset.tab === savedTab)) {
+      activateTab(savedTab);
+    }
     tabButtons.forEach((button) => {
-      button.addEventListener("click", () => {
-        const target = button.dataset.tab;
-        tabButtons.forEach((b) => b.classList.toggle("active", b === button));
-        tabPanels.forEach((p) => p.classList.toggle("active", p.dataset.tabPanel === target));
-      });
+      button.addEventListener("click", () => activateTab(button.dataset.tab));
     });
 
     const sectionStorageKey = "assistant-ui-open-sections";
@@ -885,6 +930,44 @@
         localStorage.setItem(sectionStorageKey, JSON.stringify(openIds));
       });
     });
+
+    const schedulerEls = {
+      running: document.getElementById("scheduler-running"),
+      pollSeconds: document.getElementById("scheduler-poll-seconds"),
+      lastTick: document.getElementById("scheduler-last-tick"),
+      lastStatus: document.getElementById("scheduler-last-status"),
+      report: document.getElementById("scheduler-report"),
+      emptyHint: document.getElementById("scheduler-empty-hint"),
+    };
+    const updateSchedulerPanel = (payload) => {
+      if (!payload) return;
+      if (schedulerEls.running) schedulerEls.running.textContent = payload.running ? "yes" : "no";
+      if (schedulerEls.pollSeconds) schedulerEls.pollSeconds.textContent = String(payload.poll_seconds ?? "-");
+      if (schedulerEls.lastTick) schedulerEls.lastTick.textContent = payload.last_tick_at || "-";
+      if (schedulerEls.lastStatus) schedulerEls.lastStatus.textContent = payload.last_status || "-";
+      if (!schedulerEls.report) return;
+      const reportText = String(payload.last_report || "").trim();
+      if (reportText) {
+        schedulerEls.report.style.display = "block";
+        schedulerEls.report.textContent = reportText;
+        if (schedulerEls.emptyHint) schedulerEls.emptyHint.style.display = "none";
+      } else {
+        schedulerEls.report.style.display = "none";
+        schedulerEls.report.textContent = "";
+        if (schedulerEls.emptyHint) schedulerEls.emptyHint.style.display = "block";
+      }
+    };
+    const pollScheduler = async () => {
+      try {
+        const response = await fetch("/scheduler_status", { method: "GET", cache: "no-store" });
+        if (!response.ok) return;
+        const data = await response.json();
+        updateSchedulerPanel(data);
+      } catch (error) {
+        // Ignore polling errors silently.
+      }
+    };
+    setInterval(pollScheduler, 8000);
   </script>
 </body>
 </html>
