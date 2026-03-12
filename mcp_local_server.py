@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("local-demo-server")
 STATE_PATH = Path(__file__).with_name("data").joinpath("mcp_periodic_state.json")
+PIPELINE_OUTPUTS_DIR = Path(__file__).with_name("data").joinpath("pipeline_outputs")
 
 
 @mcp.tool()
@@ -43,6 +44,105 @@ def get_todo_from_mock_api(todo_id: int) -> dict[str, object]:
             "completed": bool(payload.get("completed", False)),
             "userId": payload.get("userId"),
         },
+    }
+
+
+@mcp.tool()
+def search_data(query: str, limit: int = 5) -> dict[str, object]:
+    """Search mock post data by query string (title/body)."""
+    cleaned_query = query.strip()
+    if not cleaned_query:
+        return {"ok": False, "error": "query is empty"}
+    top_n = max(1, min(limit, 20))
+    url = "https://jsonplaceholder.typicode.com/posts"
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as exc:
+        return {"ok": False, "error": f"request_failed: {exc}"}
+    rows = payload if isinstance(payload, list) else []
+    lowered = cleaned_query.lower()
+    matches: list[dict[str, object]] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title", ""))
+        body = str(item.get("body", ""))
+        haystack = f"{title}\n{body}".lower()
+        if lowered not in haystack:
+            continue
+        matches.append(
+            {
+                "id": int(item.get("id", 0) or 0),
+                "title": title[:140],
+                "body_excerpt": body[:220],
+            }
+        )
+        if len(matches) >= top_n:
+            break
+    return {
+        "ok": True,
+        "query": cleaned_query,
+        "returned_count": len(matches),
+        "items": matches,
+    }
+
+
+@mcp.tool()
+def summarize_data(search_payload_json: str) -> dict[str, object]:
+    """Summarize search tool output (expects JSON string from search_data)."""
+    try:
+        payload = json.loads(search_payload_json)
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "invalid search_payload_json"}
+    if not isinstance(payload, dict):
+        return {"ok": False, "error": "search payload must be object"}
+    items = payload.get("items", [])
+    if not isinstance(items, list):
+        return {"ok": False, "error": "items must be a list"}
+    query = str(payload.get("query", "")).strip() or "-"
+    count = len(items)
+    titles = []
+    for item in items[:5]:
+        if not isinstance(item, dict):
+            continue
+        titles.append(str(item.get("title", "")).strip())
+    if count == 0:
+        summary = f"No matches found for query '{query}'."
+    else:
+        titles_text = "; ".join(title for title in titles if title) or "No titles."
+        summary = (
+            f"Search summary for '{query}': {count} matches. "
+            f"Top titles: {titles_text}"
+        )
+    return {
+        "ok": True,
+        "query": query,
+        "items_count": count,
+        "summary_text": summary,
+    }
+
+
+@mcp.tool()
+def save_to_file(file_name: str, content: str) -> dict[str, object]:
+    """Save text content to data/pipeline_outputs and return file metadata."""
+    base_name = file_name.strip().replace(" ", "_")
+    if not base_name:
+        base_name = "pipeline_summary.txt"
+    if not base_name.endswith(".txt"):
+        base_name += ".txt"
+    safe_name = "".join(ch for ch in base_name if ch.isalnum() or ch in {"_", "-", "."})[:80]
+    if not safe_name:
+        safe_name = "pipeline_summary.txt"
+    PIPELINE_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = PIPELINE_OUTPUTS_DIR.joinpath(safe_name)
+    text = content.strip()
+    output_path.write_text(text, encoding="utf-8")
+    return {
+        "ok": True,
+        "file_path": str(output_path),
+        "bytes_written": len(text.encode("utf-8")),
     }
 
 

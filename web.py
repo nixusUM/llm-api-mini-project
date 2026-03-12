@@ -1,4 +1,5 @@
 import os
+import json
 import threading
 from datetime import datetime
 from datetime import timezone
@@ -255,6 +256,10 @@ def index():
     scheduler_poll_seconds = "30"
     scheduler_state = scheduler_snapshot()
     periodic_summary_result = str(scheduler_state.get("last_report", ""))
+    pipeline_query = "qui"
+    pipeline_limit = "5"
+    pipeline_file_name = "pipeline_summary.txt"
+    pipeline_result = ""
 
     active_branch = agent.get_active_branch()
     selected_branch = active_branch
@@ -316,6 +321,9 @@ def index():
         periodic_interval_seconds = request.form.get("periodic_interval_seconds", periodic_interval_seconds).strip()
         periodic_user_id = request.form.get("periodic_user_id", periodic_user_id).strip()
         scheduler_poll_seconds = request.form.get("scheduler_poll_seconds", scheduler_poll_seconds).strip()
+        pipeline_query = request.form.get("pipeline_query", pipeline_query).strip()
+        pipeline_limit = request.form.get("pipeline_limit", pipeline_limit).strip()
+        pipeline_file_name = request.form.get("pipeline_file_name", pipeline_file_name).strip()
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -602,6 +610,49 @@ def index():
                 SCHEDULER_STATE["last_tick_at"] = _now_utc_text()
                 SCHEDULER_STATE["last_status"] = "manual_refresh"
             status = "Scheduler summary refreshed."
+        elif action == "run_mcp_pipeline":
+            try:
+                limit_int = int(pipeline_limit)
+            except ValueError:
+                limit_int = 5
+            search_step = call_mcp_tool_sync(
+                tool_name="search_data",
+                arguments={"query": pipeline_query, "limit": limit_int},
+            )
+            search_struct = search_step.get("structured", {})
+            if not isinstance(search_struct, dict):
+                search_struct = {}
+            summarize_step = call_mcp_tool_sync(
+                tool_name="summarize_data",
+                arguments={"search_payload_json": json.dumps(search_struct, ensure_ascii=False)},
+            )
+            summarize_struct = summarize_step.get("structured", {})
+            if not isinstance(summarize_struct, dict):
+                summarize_struct = {}
+            summary_text = str(summarize_struct.get("summary_text", "")).strip()
+            save_step = call_mcp_tool_sync(
+                tool_name="save_to_file",
+                arguments={"file_name": pipeline_file_name, "content": summary_text},
+            )
+            save_struct = save_step.get("structured", {})
+            if not isinstance(save_struct, dict):
+                save_struct = {}
+            pipeline_payload = {
+                "ok": bool(search_step.get("ok")) and bool(summarize_step.get("ok")) and bool(save_step.get("ok")),
+                "steps": {
+                    "search": search_struct,
+                    "summarize": summarize_struct,
+                    "save_to_file": save_struct,
+                },
+            }
+            pipeline_result = json.dumps(pipeline_payload, ensure_ascii=False, indent=2)
+            status = "MCP pipeline executed: search -> summarize -> save_to_file."
+            if summary_text:
+                prompt = (
+                    "Use this MCP pipeline summary:\n"
+                    f"{summary_text}\n\n"
+                    "Provide 3 concise insights."
+                )
         elif action == "send":
             if prompt:
                 response = agent.run_chat_persistent(
@@ -696,6 +747,10 @@ def index():
         scheduler_poll_seconds=scheduler_poll_seconds,
         periodic_summary_result=periodic_summary_result,
         scheduler_state=scheduler_state,
+        pipeline_query=pipeline_query,
+        pipeline_limit=pipeline_limit,
+        pipeline_file_name=pipeline_file_name,
+        pipeline_result=pipeline_result,
         active_branch=active_branch,
         selected_branch=selected_branch,
         branches=branches,

@@ -125,3 +125,27 @@ python3 mcp_list_tools.py --call get_todo_from_mock_api '{"todo_id": 3}'
 - `Start 24/7 scheduler` / `Stop`
 
 Фоновый планировщик в приложении периодически вызывает MCP-инструменты и обновляет сводку.
+
+## MCP tool composition pipeline
+
+Добавлены три MCP-инструмента для цепочки:
+- `search_data(query, limit)` — получает данные (поиск по mock API)
+- `summarize_data(search_payload_json)` — обрабатывает результат поиска
+- `save_to_file(file_name, content)` — сохраняет summary в файл
+
+Автоматический пайплайн в web UI:
+- кнопка `Run MCP pipeline: search -> summarize -> save_to_file`
+- результат каждого шага показывается во вкладке `Pipeline`
+
+CLI примеры:
+
+```bash
+# 1) Search
+python3 mcp_list_tools.py --call search_data '{"query":"qui","limit":3}'
+
+# 2) Summarize (передайте JSON из search_data)
+python3 mcp_list_tools.py --call summarize_data '{"search_payload_json":"{\"ok\":true,\"query\":\"qui\",\"returned_count\":1,\"items\":[{\"id\":2,\"title\":\"qui est esse\",\"body_excerpt\":\"...\"}]}"}'
+
+# 3) Save
+python3 mcp_list_tools.py --call save_to_file '{"file_name":"pipeline_summary.txt","content":"Your summary text"}'
+```

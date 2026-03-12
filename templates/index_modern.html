@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Day 14 - Assistant Control Center</title>
+  <title>Day 19 - Assistant Control Center</title>
   <style>
     :root {
       --bg: #0b1020;
@@ -30,13 +30,13 @@
       overflow: hidden;
     }
     .app {
-      max-width: 1520px;
+      max-width: 1560px;
       margin: 0 auto;
-      height: 100vh;
-      padding: 14px;
+      height: 100dvh;
+      padding: 10px;
       display: grid;
       grid-template-rows: auto 1fr;
-      gap: 12px;
+      gap: 10px;
     }
     .topbar {
       border: 1px solid var(--line);
@@ -107,6 +107,7 @@
       display: grid;
       grid-template-columns: 320px minmax(0, 1fr) 360px;
       gap: 12px;
+      align-items: stretch;
     }
     .layout > * { min-height: 0; }
     .panel {
@@ -120,6 +121,7 @@
       overflow-y: auto;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
+      scrollbar-gutter: stable;
       padding: 10px;
       display: flex;
       flex-direction: column;
@@ -262,7 +264,7 @@
 
     .tabs {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 6px;
       margin-bottom: 8px;
     }
@@ -342,7 +344,7 @@
   <div class="app">
     <div class="topbar">
       <div>
-        <h1>Assistant Control Center - Day 14</h1>
+        <h1>Assistant Control Center - Day 19</h1>
         <div class="sub">Cleaner UI with progressive controls, invariant-first workflow, and conflict-safe responses.</div>
         {% if status %}
         {% set status_lower = status|lower %}
@@ -422,6 +424,21 @@
               {{ mcp_tool_result }}
             </div>
             {% endif %}
+            <div class="field" style="margin-top: 10px;">
+              <label for="pipeline_query">Pipeline query (search)</label>
+              <input id="pipeline_query" name="pipeline_query" value="{{ pipeline_query }}">
+            </div>
+            <div class="row-2">
+              <div class="field">
+                <label for="pipeline_limit">Pipeline limit</label>
+                <input id="pipeline_limit" name="pipeline_limit" value="{{ pipeline_limit }}">
+              </div>
+              <div class="field">
+                <label for="pipeline_file_name">Pipeline output file</label>
+                <input id="pipeline_file_name" name="pipeline_file_name" value="{{ pipeline_file_name }}">
+              </div>
+            </div>
+            <button type="submit" name="action" value="run_mcp_pipeline" formnovalidate class="btn-secondary">Run MCP pipeline: search -> summarize -> save_to_file</button>
             <div class="field" style="margin-top: 10px;">
               <label for="periodic_job_id">Periodic job id</label>
               <input id="periodic_job_id" name="periodic_job_id" value="{{ periodic_job_id }}">
@@ -650,6 +667,7 @@
           <button type="button" class="tab-btn active" data-tab="snapshot">Snapshot</button>
           <button type="button" class="tab-btn" data-tab="metrics">Metrics</button>
           <button type="button" class="tab-btn" data-tab="compare">Compare</button>
+          <button type="button" class="tab-btn" data-tab="pipeline">Pipeline</button>
           <button type="button" class="tab-btn" data-tab="scheduler">Scheduler</button>
           <button type="button" class="tab-btn" data-tab="guide">Guide</button>
         </div>
@@ -814,6 +832,25 @@
             </div>
             {% endfor %}
           {% endif %}
+        </div>
+
+        <div class="tab-panel" data-tab-panel="pipeline">
+          <div class="section-content">
+            <div class="stats">
+              Pipeline: <strong>search -> summarize -> save_to_file</strong><br>
+              Query: <strong>{{ pipeline_query }}</strong><br>
+              Limit: <strong>{{ pipeline_limit }}</strong><br>
+              Output file: <strong>{{ pipeline_file_name }}</strong>
+            </div>
+          </div>
+          <div class="section-content">
+            <label>Pipeline result</label>
+            {% if pipeline_result %}
+            <pre style="margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font-size: 12px;">{{ pipeline_result }}</pre>
+            {% else %}
+            <div class="hint">No pipeline run yet. Use the left button to run the full MCP chain automatically.</div>
+            {% endif %}
+          </div>
         </div>
 
         <div class="tab-panel" data-tab-panel="scheduler">
