@@ -149,3 +149,16 @@ python3 mcp_list_tools.py --call summarize_data '{"search_payload_json":"{\"ok\"
 # 3) Save
 python3 mcp_list_tools.py --call save_to_file '{"file_name":"pipeline_summary.txt","content":"Your summary text"}'
 ```
+
+## Orchestration MCP (multi-server)
+
+Регистрируются несколько MCP-серверов (локальный + публичный `@modelcontextprotocol/server-everything`). Агент/оркестратор выбирает инструмент и маршрутизирует вызов на нужный сервер.
+
+- **Модуль**: `mcp_orchestrator.py` — конфиг серверов `SERVERS`, `get_tool_to_server_map()`, `run_long_flow(query, limit, output_file)`.
+- **Длинный флоу**: `search_data` (local) → `summarize_data` (local) → `echo` (public) → `save_to_file` (local). Порядок шагов и выбор сервера заданы в коде; результат каждого шага сохраняется.
+
+В web UI:
+- Вкладка **Orchestration**: зарегистрированные серверы, таблица «инструмент → сервер», результат последнего запуска флоу.
+- В левой панели: поля запроса/лимита/имени файла и кнопка **Run orchestration flow (local + public MCP)**.
+
+Для работы флоу с публичным сервером нужны `node`/`npx` (запуск `npx -y @modelcontextprotocol/server-everything`).

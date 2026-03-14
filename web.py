@@ -12,6 +12,9 @@ from anthropic_client import get_model_override
 from llm_agent import LLMAgent
 from mcp_list_tools import call_mcp_tool_sync
 from mcp_list_tools import list_mcp_tools_sync
+from mcp_orchestrator import get_tool_to_server_map
+from mcp_orchestrator import run_long_flow
+from mcp_orchestrator import SERVERS
 
 app = Flask(__name__)
 agent = LLMAgent()
@@ -117,6 +120,13 @@ def parse_context_limit(raw_value: str, fallback: int) -> int:
     except ValueError:
         return fallback
     return max(200, min(value, 500000))
+
+
+def _format_mcp_extra_result(tool_result: dict, tool_name: str) -> str:
+    if tool_result.get("structured"):
+        return json.dumps(tool_result["structured"], ensure_ascii=False, indent=2)
+    text = (tool_result.get("text") or "").strip()
+    return text or f"{tool_name}: no output"
 
 
 def parse_window(raw_value: str, fallback: int) -> int:
@@ -250,6 +260,10 @@ def index():
     public_mcp_tools: list[dict[str, str]] = []
     mcp_todo_id = "1"
     mcp_tool_result = ""
+    weather_city = "London"
+    rate_from = "USD"
+    rate_to = "EUR"
+    mcp_extra_result = ""
     periodic_job_id = "todo_summary_main"
     periodic_interval_seconds = "60"
     periodic_user_id = "1"
@@ -260,6 +274,15 @@ def index():
     pipeline_limit = "5"
     pipeline_file_name = "pipeline_summary.txt"
     pipeline_result = ""
+    orchestration_query = "qui"
+    orchestration_limit = "5"
+    orchestration_file_name = "orchestration_summary.txt"
+    orchestration_result = ""
+    tool_to_server_map: dict[str, str] = {}
+    try:
+        tool_to_server_map = get_tool_to_server_map()
+    except Exception:
+        pass
 
     active_branch = agent.get_active_branch()
     selected_branch = active_branch
@@ -317,6 +340,9 @@ def index():
         new_branch_name = request.form.get("new_branch_name", "").strip()
         source_checkpoint_id = request.form.get("source_checkpoint_id", "").strip()
         mcp_todo_id = request.form.get("mcp_todo_id", "1").strip() or "1"
+        weather_city = request.form.get("weather_city", weather_city).strip()
+        rate_from = request.form.get("rate_from", rate_from).strip()
+        rate_to = request.form.get("rate_to", rate_to).strip()
         periodic_job_id = request.form.get("periodic_job_id", periodic_job_id).strip() or periodic_job_id
         periodic_interval_seconds = request.form.get("periodic_interval_seconds", periodic_interval_seconds).strip()
         periodic_user_id = request.form.get("periodic_user_id", periodic_user_id).strip()
@@ -324,6 +350,9 @@ def index():
         pipeline_query = request.form.get("pipeline_query", pipeline_query).strip()
         pipeline_limit = request.form.get("pipeline_limit", pipeline_limit).strip()
         pipeline_file_name = request.form.get("pipeline_file_name", pipeline_file_name).strip()
+        orchestration_query = request.form.get("orchestration_query", orchestration_query).strip()
+        orchestration_limit = request.form.get("orchestration_limit", orchestration_limit).strip()
+        orchestration_file_name = request.form.get("orchestration_file_name", orchestration_file_name).strip()
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -561,6 +590,34 @@ def index():
                     )
             else:
                 status = "MCP tool execution failed."
+        elif action == "run_weather":
+            tool_result = call_mcp_tool_sync(
+                tool_name="get_weather",
+                arguments={"city": weather_city or "London", "units": "celsius"},
+            )
+            mcp_extra_result = _format_mcp_extra_result(tool_result, "get_weather")
+            status = "Weather fetched." if tool_result.get("ok") else "Weather request failed."
+            if tool_result.get("ok") and tool_result.get("structured"):
+                prompt = (
+                    "Use this weather data and suggest what to wear or do:\n"
+                    f"{mcp_extra_result}"
+                )
+        elif action == "run_exchange_rate":
+            tool_result = call_mcp_tool_sync(
+                tool_name="get_exchange_rate",
+                arguments={"from_currency": rate_from or "USD", "to_currency": rate_to or "EUR"},
+            )
+            mcp_extra_result = _format_mcp_extra_result(tool_result, "get_exchange_rate")
+            status = "Exchange rate fetched." if tool_result.get("ok") else "Rate request failed."
+        elif action == "run_quote":
+            tool_result = call_mcp_tool_sync(tool_name="get_random_quote", arguments={})
+            mcp_extra_result = _format_mcp_extra_result(tool_result, "get_random_quote")
+            status = "Quote fetched." if tool_result.get("ok") else "Quote request failed."
+            if tool_result.get("ok") and tool_result.get("structured"):
+                prompt = (
+                    "Here is a random quote. Comment on it in one sentence:\n"
+                    f"{mcp_extra_result}"
+                )
         elif action == "configure_periodic_summary":
             try:
                 interval_int = int(periodic_interval_seconds)
@@ -653,6 +710,51 @@ def index():
                     f"{summary_text}\n\n"
                     "Provide 3 concise insights."
                 )
+        elif action == "run_orchestration_flow":
+            try:
+                limit_int = int(orchestration_limit)
+            except ValueError:
+                limit_int = 5
+            try:
+                steps = run_long_flow(
+                    query=orchestration_query or "qui",
+                    limit=limit_int,
+                    output_file=orchestration_file_name or "orchestration_summary.txt",
+                )
+                all_ok = all(s.get("result", {}).get("ok", False) for s in steps)
+                payload = {
+                    "ok": all_ok,
+                    "steps": [
+                        {
+                            "server_id": s["server_id"],
+                            "tool_name": s["tool_name"],
+                            "arguments": s["arguments"],
+                            "ok": s.get("result", {}).get("ok", False),
+                            "text": (s.get("result") or {}).get("text", "")[:500],
+                        }
+                        for s in steps
+                    ],
+                }
+                orchestration_result = json.dumps(payload, ensure_ascii=False, indent=2)
+                status = "Orchestration flow ran across local + public MCP servers."
+                if all_ok and len(steps) >= 2:
+                    sum_result = steps[1].get("result", {})
+                    sum_struct = sum_result.get("structured", {})
+                    if isinstance(sum_struct, dict):
+                        summary_text = str(sum_struct.get("summary_text", "")).strip()
+                        if summary_text:
+                            prompt = (
+                                "Ниже результат длинного флоу оркестрации MCP (поиск → суммаризация → echo → сохранение в файл). "
+                                "Используй эти данные по заданию: сформулируй краткие выводы или ответь на вопрос пользователя.\n\n"
+                                f"{summary_text}"
+                            )
+            except Exception as exc:
+                orchestration_result = json.dumps(
+                    {"ok": False, "error": str(exc), "steps": []},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                status = f"Orchestration flow failed: {exc}"
         elif action == "send":
             if prompt:
                 response = agent.run_chat_persistent(
@@ -741,6 +843,10 @@ def index():
         public_mcp_tools=public_mcp_tools,
         mcp_todo_id=mcp_todo_id,
         mcp_tool_result=mcp_tool_result,
+        weather_city=weather_city,
+        rate_from=rate_from,
+        rate_to=rate_to,
+        mcp_extra_result=mcp_extra_result,
         periodic_job_id=periodic_job_id,
         periodic_interval_seconds=periodic_interval_seconds,
         periodic_user_id=periodic_user_id,
@@ -751,6 +857,12 @@ def index():
         pipeline_limit=pipeline_limit,
         pipeline_file_name=pipeline_file_name,
         pipeline_result=pipeline_result,
+        orchestration_query=orchestration_query,
+        orchestration_limit=orchestration_limit,
+        orchestration_file_name=orchestration_file_name,
+        orchestration_result=orchestration_result,
+        tool_to_server_map=tool_to_server_map,
+        registered_servers=list(SERVERS.keys()),
         active_branch=active_branch,
         selected_branch=selected_branch,
         branches=branches,

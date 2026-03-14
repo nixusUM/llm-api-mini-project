@@ -146,6 +146,107 @@ def save_to_file(file_name: str, content: str) -> dict[str, object]:
     }
 
 
+@mcp.tool()
+def get_weather(city: str, units: str = "celsius") -> dict[str, object]:
+    """Get current weather for a city (Open-Meteo, no API key). Example: get_weather('London') or get_weather('Moscow', 'celsius')."""
+    name = (city or "").strip()
+    if not name:
+        return {"ok": False, "error": "city is empty"}
+    geocode_url = "https://geocoding-api.open-meteo.com/v1/search"
+    try:
+        geo = requests.get(geocode_url, params={"name": name, "count": 1}, timeout=8)
+        geo.raise_for_status()
+        data = geo.json()
+        results = data.get("results", []) if isinstance(data, dict) else []
+        if not results or not isinstance(results[0], dict):
+            return {"ok": False, "error": f"city not found: {name}"}
+        lat = results[0].get("latitude")
+        lon = results[0].get("longitude")
+        display_name = results[0].get("name", name)
+        country = results[0].get("country_code", "")
+    except requests.RequestException as exc:
+        return {"ok": False, "error": f"geocoding failed: {exc}"}
+    temp_unit = "fahrenheit" if (units or "").strip().lower() == "fahrenheit" else "celsius"
+    weather_url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
+        "timezone": "auto",
+    }
+    try:
+        w = requests.get(weather_url, params=params, timeout=8)
+        w.raise_for_status()
+        wdata = w.json()
+        current = (wdata.get("current") or {}) if isinstance(wdata, dict) else {}
+        temp = current.get("temperature_2m")
+        humidity = current.get("relative_humidity_2m")
+        code = current.get("weather_code")
+        wind = current.get("wind_speed_10m")
+    except requests.RequestException as exc:
+        return {"ok": False, "error": f"weather request failed: {exc}"}
+    return {
+        "ok": True,
+        "source": "open-meteo",
+        "place": f"{display_name}, {country}" if country else display_name,
+        "units": temp_unit,
+        "temperature": temp,
+        "humidity_percent": humidity,
+        "weather_code": code,
+        "wind_speed_kmh": wind,
+    }
+
+
+@mcp.tool()
+def get_exchange_rate(from_currency: str, to_currency: str) -> dict[str, object]:
+    """Get latest exchange rate (Frankfurter API, free). Example: get_exchange_rate('USD', 'EUR')."""
+    fc = (from_currency or "USD").strip().upper()[:3]
+    tc = (to_currency or "EUR").strip().upper()[:3]
+    if not fc or not tc:
+        return {"ok": False, "error": "from_currency and to_currency required"}
+    try:
+        r = requests.get(
+            "https://api.frankfurter.app/latest",
+            params={"from": fc, "to": tc},
+            timeout=8,
+        )
+        r.raise_for_status()
+        data = r.json()
+        rate = data.get("rates", {}).get(tc) if isinstance(data, dict) else None
+        date = data.get("date", "") if isinstance(data, dict) else ""
+    except requests.RequestException as exc:
+        return {"ok": False, "error": str(exc)}
+    if rate is None:
+        return {"ok": False, "error": f"rate not found for {fc} -> {tc}"}
+    return {
+        "ok": True,
+        "source": "frankfurter",
+        "from_currency": fc,
+        "to_currency": tc,
+        "rate": rate,
+        "date": date,
+    }
+
+
+@mcp.tool()
+def get_random_quote() -> dict[str, object]:
+    """Get a random quote (Quotable API, free)."""
+    try:
+        r = requests.get("https://api.quotable.io/random", timeout=6)
+        r.raise_for_status()
+        data = r.json()
+        content = data.get("content", "") if isinstance(data, dict) else ""
+        author = data.get("author", "") if isinstance(data, dict) else ""
+    except requests.RequestException as exc:
+        return {"ok": False, "error": str(exc)}
+    return {
+        "ok": True,
+        "source": "quotable",
+        "quote": content,
+        "author": author,
+    }
+
+
 def _default_state() -> dict[str, object]:
     return {"jobs": {}, "history": []}
 

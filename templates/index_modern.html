@@ -105,7 +105,7 @@
       min-height: 0;
       height: 100%;
       display: grid;
-      grid-template-columns: 320px minmax(0, 1fr) 360px;
+      grid-template-columns: 340px minmax(0, 1fr) 380px;
       gap: 12px;
       align-items: stretch;
     }
@@ -146,6 +146,7 @@
       background: #162142;
     }
     .section-content { padding: 10px; }
+    .section-nested { margin-top: 8px; margin-left: 6px; border-color: #253558; }
     .field { margin-bottom: 9px; }
     label {
       display: block;
@@ -263,8 +264,8 @@
     }
 
     .tabs {
-      display: grid;
-      grid-template-columns: repeat(6, 1fr);
+      display: flex;
+      flex-wrap: wrap;
       gap: 6px;
       margin-bottom: 8px;
     }
@@ -273,9 +274,15 @@
       background: #111b34;
       color: var(--muted);
       border-radius: 8px;
-      padding: 7px 8px;
+      padding: 7px 10px;
       font-size: 12px;
       cursor: pointer;
+      min-width: 0;
+      flex: 1 1 auto;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .tab-btn.active {
       color: var(--text);
@@ -413,7 +420,13 @@
               <button type="submit" name="action" value="test_mcp" formnovalidate class="btn-secondary">Test MCP connection</button>
               <button type="submit" name="action" value="test_public_mcp" formnovalidate class="btn-secondary">Test Public MCP</button>
             </div>
-            <div class="field" style="margin-top: 10px;">
+          </div>
+        </details>
+
+        <details class="section" data-section="mcp_tools">
+          <summary>MCP tools (todo, weather, rates)</summary>
+          <div class="section-content">
+            <div class="field">
               <label for="mcp_todo_id">MCP tool param: todo_id</label>
               <input id="mcp_todo_id" name="mcp_todo_id" value="{{ mcp_todo_id }}">
             </div>
@@ -424,7 +437,40 @@
               {{ mcp_tool_result }}
             </div>
             {% endif %}
-            <div class="field" style="margin-top: 10px;">
+            <details class="section section-nested" data-section="mcp-extra">
+              <summary>Weather, rates, quote</summary>
+              <div class="section-content">
+                <div class="field">
+                  <label for="weather_city">City (weather)</label>
+                  <input id="weather_city" name="weather_city" value="{{ weather_city }}" placeholder="London">
+                </div>
+                <button type="submit" name="action" value="run_weather" formnovalidate class="btn-secondary">Get weather</button>
+                <div class="row-2" style="margin-top: 8px;">
+                  <div class="field">
+                    <label for="rate_from">From</label>
+                    <input id="rate_from" name="rate_from" value="{{ rate_from }}" placeholder="USD">
+                  </div>
+                  <div class="field">
+                    <label for="rate_to">To</label>
+                    <input id="rate_to" name="rate_to" value="{{ rate_to }}" placeholder="EUR">
+                  </div>
+                </div>
+                <button type="submit" name="action" value="run_exchange_rate" formnovalidate class="btn-secondary">Get exchange rate</button>
+                <div style="margin-top: 8px;">
+                  <button type="submit" name="action" value="run_quote" formnovalidate class="btn-secondary">Get random quote</button>
+                </div>
+                {% if mcp_extra_result %}
+                <div class="hint" style="margin-top: 8px; white-space: pre-wrap; font-size: 12px;">{{ mcp_extra_result }}</div>
+                {% endif %}
+              </div>
+            </details>
+          </div>
+        </details>
+
+        <details class="section" data-section="pipeline">
+          <summary>Pipeline (search → summarize → save)</summary>
+          <div class="section-content">
+            <div class="field">
               <label for="pipeline_query">Pipeline query (search)</label>
               <input id="pipeline_query" name="pipeline_query" value="{{ pipeline_query }}">
             </div>
@@ -438,8 +484,35 @@
                 <input id="pipeline_file_name" name="pipeline_file_name" value="{{ pipeline_file_name }}">
               </div>
             </div>
-            <button type="submit" name="action" value="run_mcp_pipeline" formnovalidate class="btn-secondary">Run MCP pipeline: search -> summarize -> save_to_file</button>
-            <div class="field" style="margin-top: 10px;">
+            <button type="submit" name="action" value="run_mcp_pipeline" formnovalidate class="btn-secondary">Run MCP pipeline: search → summarize → save_to_file</button>
+          </div>
+        </details>
+
+        <details class="section" data-section="orchestration">
+          <summary>Orchestration (local + public MCP)</summary>
+          <div class="section-content">
+            <div class="field">
+              <label for="orchestration_query">Orchestration query</label>
+              <input id="orchestration_query" name="orchestration_query" value="{{ orchestration_query }}">
+            </div>
+            <div class="row-2">
+              <div class="field">
+                <label for="orchestration_limit">Orchestration limit</label>
+                <input id="orchestration_limit" name="orchestration_limit" value="{{ orchestration_limit }}">
+              </div>
+              <div class="field">
+                <label for="orchestration_file_name">Output file</label>
+                <input id="orchestration_file_name" name="orchestration_file_name" value="{{ orchestration_file_name }}">
+              </div>
+            </div>
+            <button type="submit" name="action" value="run_orchestration_flow" formnovalidate class="btn-secondary">Run orchestration flow (local + public MCP)</button>
+          </div>
+        </details>
+
+        <details class="section" data-section="scheduler">
+          <summary>Scheduler (periodic, 24/7)</summary>
+          <div class="section-content">
+            <div class="field">
               <label for="periodic_job_id">Periodic job id</label>
               <input id="periodic_job_id" name="periodic_job_id" value="{{ periodic_job_id }}">
             </div>
@@ -476,7 +549,7 @@
           </div>
         </details>
 
-        <details class="section" data-section="invariant_manager" open>
+        <details class="section" data-section="invariant_manager">
           <summary>Invariant manager</summary>
           <div class="section-content">
             <div class="field">
@@ -668,6 +741,7 @@
           <button type="button" class="tab-btn" data-tab="metrics">Metrics</button>
           <button type="button" class="tab-btn" data-tab="compare">Compare</button>
           <button type="button" class="tab-btn" data-tab="pipeline">Pipeline</button>
+          <button type="button" class="tab-btn" data-tab="orchestration" title="Orchestration">Orch.</button>
           <button type="button" class="tab-btn" data-tab="scheduler">Scheduler</button>
           <button type="button" class="tab-btn" data-tab="guide">Guide</button>
         </div>
@@ -853,6 +927,44 @@
           </div>
         </div>
 
+        <div class="tab-panel" data-tab-panel="orchestration">
+          <div class="section-content">
+            <label>Registered MCP servers</label>
+            <ul class="list">
+              {% for s in registered_servers %}
+              <li><strong>{{ s }}</strong></li>
+              {% endfor %}
+            </ul>
+          </div>
+          <div class="section-content">
+            <label>Tool → server routing</label>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Tool</th><th>Server</th></tr>
+                </thead>
+                <tbody>
+                  {% for tool_name, server_id in tool_to_server_map.items() %}
+                  <tr><td>{{ tool_name }}</td><td>{{ server_id }}</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% if not tool_to_server_map %}
+            <div class="hint">No tools loaded. Run "Test MCP" / "Test Public MCP" or run the orchestration flow.</div>
+            {% endif %}
+          </div>
+          <div class="section-content">
+            <label>Orchestration flow result</label>
+            <p class="hint">Flow: search_data (local) → summarize_data (local) → echo (public) → save_to_file (local)</p>
+            {% if orchestration_result %}
+            <pre style="margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font-size: 12px;">{{ orchestration_result }}</pre>
+            {% else %}
+            <div class="hint">No run yet. Use the left button "Run orchestration flow (local + public MCP)".</div>
+            {% endif %}
+          </div>
+        </div>
+
         <div class="tab-panel" data-tab-panel="scheduler">
           <div class="section-content">
             <div class="stats">
@@ -883,7 +995,8 @@
             2) Send non-conflict prompt and check `Invariant Check` line.<br>
             3) Send conflict prompt and confirm hard refusal with invariant ids.<br>
             4) Test lifecycle: planning -> execution -> validation -> done with gate buttons.<br>
-            5) Rephrase request within constraints and verify normal answer.
+            5) Rephrase request within constraints and verify normal answer.<br>
+            6) Orchestration: open "Orchestration" tab, check registered servers and tool→server map, run "Run orchestration flow" to run a long flow across local + public MCP (search → summarize → echo → save).
           </div>
           <div class="hint" style="margin-top: 8px;">
             Demo prompts:<br>
