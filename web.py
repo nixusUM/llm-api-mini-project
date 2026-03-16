@@ -5,7 +5,7 @@ from datetime import datetime
 from datetime import timezone
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request
 
 from anthropic_client import get_available_models
 from anthropic_client import get_model_override
@@ -892,6 +892,31 @@ def scheduler_status():
             "last_report": report,
         }
     )
+
+
+# Document Indexer routes
+@app.route("/document_indexer")
+def document_indexer():
+    """Start standalone indexer if needed and redirect."""
+    import subprocess
+    import socket
+
+    indexer_port = int(os.getenv("INDEXER_PORT", "5052"))
+
+    # Check if indexer is running
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    is_running = sock.connect_ex(("127.0.0.1", indexer_port)) == 0
+    sock.close()
+
+    if not is_running:
+        subprocess.Popen(
+            ["python", "document_indexer_app.py"],
+            cwd=os.path.dirname(__file__),
+        )
+        import time
+        time.sleep(2)
+
+    return redirect(f"http://127.0.0.1:{indexer_port}/document_indexer")
 
 
 if __name__ == "__main__":

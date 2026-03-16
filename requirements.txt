@@ -3,3 +3,6 @@ requests
 python-dotenv
 anthropic
 mcp
+numpy
+faiss-cpu
+pypdf

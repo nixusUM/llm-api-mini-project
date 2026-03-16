@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Indexer - Пайплайн индексации</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+
+        header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 900px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .card h2 {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #667eea;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 5px;
+            color: #555;
+        }
+
+        select, input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+            margin-bottom: 8px;
+        }
+
+        button:hover {
+            background: #5a67d8;
+            transform: translateY(-1px);
+        }
+
+        button:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button.secondary {
+            background: #edf2f7;
+            color: #4a5568;
+        }
+
+        button.secondary:hover {
+            background: #e2e8f0;
+        }
+
+        button.danger {
+            background: #fc8181;
+        }
+
+        button.danger:hover {
+            background: #f56565;
+        }
+
+        .doc-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .doc-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .doc-item:hover {
+            background: #f7fafc;
+        }
+
+        .doc-item input[type="checkbox"] {
+            margin-right: 10px;
+        }
+
+        .doc-item .name {
+            flex: 1;
+            font-size: 13px;
+        }
+
+        .doc-item .size {
+            font-size: 11px;
+            color: #718096;
+        }
+
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 5px;
+            border-bottom: 2px solid #e2e8f0;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab:hover:not(.active) {
+            color: #5a67d8;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        .stat-card p {
+            opacity: 0.9;
+            font-size: 0.9em;
+        }
+
+        .result-section {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .result-section h4 {
+            color: #4a5568;
+            margin-bottom: 10px;
+            font-size: 0.95em;
+        }
+
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .search-result {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+
+        .search-result .score {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .search-result .meta {
+            font-size: 12px;
+            color: #718096;
+            margin-bottom: 8px;
+        }
+
+        .search-result .text {
+            font-size: 14px;
+            color: #2d3748;
+            line-height: 1.6;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .comparison-table th {
+            background: #f7fafc;
+            font-weight: 600;
+            color: #4a5568;
+        }
+
+        .chunk-preview {
+            background: #edf2f7;
+            border-left: 3px solid #667eea;
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 0 6px 6px 0;
+            font-size: 12px;
+        }
+
+        .chunk-preview .chunk-id {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 4px;
+        }
+
+        .chunk-preview .section {
+            font-size: 11px;
+            color: #718096;
+            margin-bottom: 4px;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 3px solid #e2e8f0;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .alert {
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .alert-success {
+            background: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+
+        .alert-error {
+            background: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #fc8181;
+        }
+
+        .alert-info {
+            background: #bee3f8;
+            color: #2a4365;
+            border: 1px solid #90cdf4;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .badge-blue {
+            background: #bee3f8;
+            color: #2a4365;
+        }
+
+        .badge-green {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .badge-purple {
+            background: #e9d8fd;
+            color: #553c9a;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 Document Indexer</h1>
+            <p>Пайплайн индексации документов с chunking, эмбеддингами и метаданными</p>
+        </header>
+
+        <div class="grid">
+            <div class="sidebar">
+                <div class="card">
+                    <h2>📄 Документы</h2>
+                    <div class="doc-list">
+                        {% for doc in documents %}
+                        <div class="doc-item">
+                            <input type="checkbox" id="doc_{{ loop.index }}" value="{{ doc.name }}" checked>
+                            <span class="name">{{ doc.name }}</span>
+                            <span class="size">{{ "%.1f" | format(doc.size / 1024) }} KB</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <button onclick="selectAllDocs()" class="secondary">Выбрать все</button>
+                    <button onclick="deselectAllDocs()" class="secondary">Снять все</button>
+                </div>
+
+                <div class="card">
+                    <h2>⚙️ Настройки</h2>
+                    <div class="form-group">
+                        <label>Стратегия chunking</label>
+                        <select id="strategy">
+                            <option value="fixed_size">Fixed Size (500 chars)</option>
+                            <option value="structure_based">Structure Based</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Хранилище</label>
+                        <select id="storage">
+                            <option value="faiss">FAISS</option>
+                            <option value="sqlite">SQLite</option>
+                            <option value="json">JSON</option>
+                        </select>
+                    </div>
+                    <button onclick="indexDocuments()">🚀 Индексировать</button>
+                    <button onclick="resetIndices()" class="danger">🗑️ Сбросить индексы</button>
+                </div>
+
+                <div class="card">
+                    <h2>🔍 Поиск</h2>
+                    <div class="form-group">
+                        <input type="text" id="searchQuery" placeholder="Введите поисковый запрос...">
+                    </div>
+                    <div class="form-group">
+                        <label>Количество результатов</label>
+                        <input type="number" id="topK" value="5" min="1" max="20">
+                    </div>
+                    <button onclick="searchDocuments()">🔍 Искать</button>
+                </div>
+            </div>
+
+            <div class="main-content">
+                <div class="card">
+                    <div class="tabs">
+                        <div class="tab active" onclick="switchTab('index')">📊 Индексация</div>
+                        <div class="tab" onclick="switchTab('compare')">⚖️ Сравнение стратегий</div>
+                        <div class="tab" onclick="switchTab('search-results')">🔍 Результаты поиска</div>
+                        <div class="tab" onclick="switchTab('stats')">📈 Статистика</div>
+                    </div>
+
+                    <!-- Index Tab -->
+                    <div id="tab-index" class="tab-content active">
+                        {% if last_result %}
+                        <div class="alert alert-success">
+                            Последняя индексация: {{ last_result.strategy }} | 
+                            {{ last_result.chunks_created }} чанков | 
+                            {{ last_result.elapsed_seconds }} сек
+                        </div>
+
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <h3>{{ last_result.documents_indexed }}</h3>
+                                <p>Документов</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>{{ last_result.chunks_created }}</h3>
+                                <p>Чанков</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>{{ last_result.embeddings_generated }}</h3>
+                                <p>Эмбеддингов</p>
+                            </div>
+                            <div class="stat-card">
+                                <h3>{{ last_result.chunks_per_second }}</h3>
+                                <p>Чанков/сек</p>
+                            </div>
+                        </div>
+
+                        <div class="result-section">
+                            <h4>Детали пайплайна</h4>
+                            <div class="code-block">
+<pre>Стратегия: {{ last_result.strategy }}
+Хранилище: {{ last_result.storage }}
+Всего символов: {{ last_result.total_chars }}
+Время выполнения: {{ last_result.elapsed_seconds }} секунд</pre>
+                            </div>
+                        </div>
+
+                        <button onclick="saveIndex()" class="secondary">💾 Сохранить индекс</button>
+                        {% else %}
+                        <div class="alert alert-info">
+                            Выберите документы и нажмите "Индексировать" для начала работы.
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Compare Tab -->
+                    <div id="tab-compare" class="tab-content">
+                        <div class="form-group">
+                            <label>Документ для сравнения</label>
+                            <select id="compareDoc">
+                                {% for doc in documents %}
+                                <option value="{{ doc.name }}">{{ doc.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button onclick="compareStrategies()">⚖️ Сравнить стратегии</button>
+
+                        {% if comparison %}
+                        <div class="result-section" style="margin-top: 20px;">
+                            <h4>Сравнение: {{ comparison.document }}</h4>
+                            <table class="comparison-table">
+                                <thead>
+                                    <tr>
+                                        <th>Метрика</th>
+                                        <th>Fixed Size</th>
+                                        <th>Structure Based</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Количество чанков</td>
+                                        <td>{{ comparison.fixed_size.chunks }}</td>
+                                        <td>{{ comparison.structure_based.chunks }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Средний размер</td>
+                                        <td>{{ comparison.fixed_size.avg_chunk_size }}</td>
+                                        <td>{{ comparison.structure_based.avg_chunk_size }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Минимальный размер</td>
+                                        <td>{{ comparison.fixed_size.min_size }}</td>
+                                        <td>{{ comparison.structure_based.min_size }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Максимальный размер</td>
+                                        <td>{{ comparison.fixed_size.max_size }}</td>
+                                        <td>{{ comparison.structure_based.max_size }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="result-section">
+                            <h4>Примеры чанков (Fixed Size)</h4>
+                            {% for chunk in comparison.fixed_size.sample_chunks %}
+                            <div class="chunk-preview">
+                                <div class="chunk-id">{{ chunk.id }}</div>
+                                <div class="section">{{ chunk.section }} | {{ chunk.size }} chars</div>
+                                <div>{{ chunk.text }}</div>
+                            </div>
+                            {% endfor %}
+                        </div>
+
+                        <div class="result-section">
+                            <h4>Примеры чанков (Structure Based)</h4>
+                            {% for chunk in comparison.structure_based.sample_chunks %}
+                            <div class="chunk-preview">
+                                <div class="chunk-id">{{ chunk.id }}</div>
+                                <div class="section">{{ chunk.section }} | {{ chunk.size }} chars</div>
+                                <div>{{ chunk.text }}</div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Search Results Tab -->
+                    <div id="tab-search-results" class="tab-content">
+                        <div class="loading" id="searchLoading">
+                            <div class="spinner"></div>
+                            <p>Выполняется поиск...</p>
+                        </div>
+                        <div id="searchResults"></div>
+                    </div>
+
+                    <!-- Stats Tab -->
+                    <div id="tab-stats" class="tab-content">
+                        <h3>Статистика пайплайнов</h3>
+                        {% for key, stat in stats.items() %}
+                        <div class="result-section">
+                            <h4>{{ key }} <span class="badge badge-blue">{{ stat.storage.type }}</span></h4>
+                            <div class="code-block">
+<pre>{{ stat | tojson(indent=2) }}</pre>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById('tab-' + tabId).classList.add('active');
+        }
+
+        function getSelectedDocs() {
+            return Array.from(document.querySelectorAll('.doc-item input:checked'))
+                .map(cb => cb.value);
+        }
+
+        function selectAllDocs() {
+            document.querySelectorAll('.doc-item input').forEach(cb => cb.checked = true);
+        }
+
+        function deselectAllDocs() {
+            document.querySelectorAll('.doc-item input').forEach(cb => cb.checked = false);
+        }
+
+        async function indexDocuments() {
+            const docs = getSelectedDocs();
+            if (docs.length === 0) {
+                alert('Выберите хотя бы один документ');
+                return;
+            }
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '⏳ Индексация...';
+
+            try {
+                const response = await fetch('/api/index', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        strategy: document.getElementById('strategy').value,
+                        storage: document.getElementById('storage').value,
+                        documents: docs
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    location.reload();
+                } else {
+                    alert('Ошибка: ' + result.error);
+                }
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🚀 Индексировать';
+            }
+        }
+
+        async function compareStrategies() {
+            const doc = document.getElementById('compareDoc').value;
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '⏳ Сравнение...';
+
+            try {
+                const response = await fetch('/api/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document: doc })
+                });
+
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    const error = await response.json();
+                    alert('Ошибка: ' + error.error);
+                }
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⚖️ Сравнить стратегии';
+            }
+        }
+
+        async function searchDocuments() {
+            const query = document.getElementById('searchQuery').value;
+            if (!query) {
+                alert('Введите поисковый запрос');
+                return;
+            }
+
+            switchTab('search-results');
+            document.getElementById('searchLoading').classList.add('active');
+            document.getElementById('searchResults').innerHTML = '';
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: query,
+                        strategy: document.getElementById('strategy').value,
+                        storage: document.getElementById('storage').value,
+                        top_k: parseInt(document.getElementById('topK').value)
+                    })
+                });
+
+                const result = await response.json();
+                displaySearchResults(result);
+            } catch (e) {
+                document.getElementById('searchResults').innerHTML =
+                    '<div class="alert alert-error">Ошибка поиска: ' + e.message + '</div>';
+            } finally {
+                document.getElementById('searchLoading').classList.remove('active');
+            }
+        }
+
+        function displaySearchResults(result) {
+            let html = '<div class="alert alert-info">';
+            html += 'Запрос: "' + result.query + '" | ';
+            html += 'Стратегия: ' + result.strategy + ' | ';
+            html += 'Найдено: ' + result.result_count + ' | ';
+            html += 'Время: ' + result.search_time_ms + 'мс';
+            html += '</div>';
+
+            if (result.results && result.results.length > 0) {
+                result.results.forEach(r => {
+                    html += '<div class="search-result">';
+                    html += '<span class="score">Score: ' + r.score + '</span>';
+                    html += '<div class="meta">';
+                    html += '<span class="badge badge-purple">' + r.source + '</span> ';
+                    html += '<strong>' + r.title + '</strong> | ';
+                    html += r.section;
+                    html += '</div>';
+                    html += '<div class="text">' + r.text + '</div>';
+                    html += '</div>';
+                });
+            } else {
+                html += '<div class="alert alert-info">Ничего не найдено</div>';
+            }
+
+            document.getElementById('searchResults').innerHTML = html;
+        }
+
+        async function saveIndex() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '⏳ Сохранение...';
+
+            try {
+                const response = await fetch('/api/save_index', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        strategy: document.getElementById('strategy').value,
+                        storage: 'json'
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    alert('Индекс сохранен: ' + result.filename);
+                } else {
+                    alert('Ошибка: ' + result.error);
+                }
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💾 Сохранить индекс';
+            }
+        }
+
+        async function resetIndices() {
+            if (!confirm('Вы уверены? Все индексы будут удалены.')) {
+                return;
+            }
+
+            try {
+                await fetch('/api/reset', { method: 'POST' });
+                location.reload();
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // Enter key for search
+        document.getElementById('searchQuery')?.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchDocuments();
+            }
+        });
+    </script>
+</body>
+</html>

@@ -162,3 +162,86 @@ python3 mcp_list_tools.py --call save_to_file '{"file_name":"pipeline_summary.tx
 - В левой панели: поля запроса/лимита/имени файла и кнопка **Run orchestration flow (local + public MCP)**.
 
 Для работы флоу с публичным сервером нужны `node`/`npx` (запуск `npx -y @modelcontextprotocol/server-everything`).
+
+## Document Indexer Pipeline
+
+Пайплайн индексации документов с chunking, эмбеддингами и метаданными.
+
+### Компоненты
+
+- **Chunking strategies**:
+  - `FixedSizeChunker` — фиксированный размер с overlap
+  - `StructureBasedChunker` — разбиение по заголовкам/разделам
+
+- **Embedder** — генерация эмбеддингов через OpenAI API (или mock для тестирования)
+
+- **Storage backends**:
+  - `FAISSStorage` — векторный поиск (при наличии faiss)
+  - `SQLiteStorage` — SQL-based с brute-force поиском
+  - `JSONStorage` — простой JSON-файл
+
+### Запуск
+
+```bash
+python3 document_indexer_app.py
+```
+
+Откройте: `http://127.0.0.1:5052/document_indexer`
+
+### Использование
+
+1. Выберите документы из смешанного корпуса:
+   - `README.md`
+   - статьи из `sample_documents/`
+   - код (`*.py` в корне и `document_indexer/*.py`)
+   - PDF-файлы из `sample_documents/` (если добавлены)
+2. Выберите стратегию chunking и хранилище
+3. Нажмите "Индексировать"
+4. Перейдите на вкладку "⚖️ Сравнение стратегий" для сравнения
+5. Используйте поиск для проверки ретривала
+
+### Структура модуля
+
+```
+document_indexer/
+├── __init__.py
+├── chunker.py              # Стратегии chunking
+├── embedder.py             # Генерация эмбеддингов
+├── index_storage.py        # Хранилища (FAISS/SQLite/JSON)
+├── document_loader.py      # Загрузка документов
+├── indexer_pipeline.py     # Оркестратор пайплайна
+└── EVALUATION_PROMPTS.md   # Промпты для тестирования
+
+sample_documents/           # Тестовые документы
+├── 01_vector_databases_guide.md
+├── 02_python_async_guide.md
+├── 03_machine_learning_basics.md
+├── 04_api_design_principles.md
+├── 05_data_structures_algorithms.md
+├── 06_system_design.md
+├── 07_database_optimization.md
+├── 08_security_best_practices.md
+└── 09_rag_pdf_brief.pdf
+```
+
+### API Endpoints
+
+```bash
+# Индексация
+curl -X POST http://127.0.0.1:5052/api/index \
+  -H "Content-Type: application/json" \
+  -d '{"strategy": "fixed_size", "storage": "faiss", "documents": []}'
+
+# Поиск
+curl -X POST http://127.0.0.1:5052/api/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "векторные базы данных", "strategy": "fixed_size", "top_k": 5}'
+
+# Сравнение стратегий
+curl -X POST http://127.0.0.1:5052/api/compare \
+  -H "Content-Type: application/json" \
+  -d '{"document": "sample_documents/01_vector_databases_guide.md"}'
+
+# Статистика
+curl http://127.0.0.1:5052/api/stats
+```
