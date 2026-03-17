@@ -213,6 +213,7 @@ def build_token_growth(history: list[dict]) -> list[dict]:
 
 @app.route("/", methods=["GET", "POST"])
 def index():
+    assignment_mode = request.args.get("full", "0") != "1"
     prompt = ""
     model_options = get_available_models()
     env_model = get_model_override()
@@ -877,6 +878,7 @@ def index():
         token_growth=token_growth,
         state_path=state_path,
         rag_questions=rag_service.control_questions(),
+        assignment_mode=assignment_mode,
     )
 
 

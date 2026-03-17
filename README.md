@@ -228,8 +228,20 @@ sample_documents/           # Тестовые документы
 ├── 06_system_design.md
 ├── 07_database_optimization.md
 ├── 08_security_best_practices.md
-└── 09_rag_pdf_brief.pdf
+├── 09_rag_pdf_brief.pdf
+├── 10_kotlin_mobile_basics.md
+├── 11_compose_multiplatform_guide.md
+└── 12_mobile_architecture_release.md
 ```
+
+### Актуальные источники для Day 22 (mobile RAG)
+
+Для контрольных вопросов и сравнения качества сейчас используются в первую очередь:
+- `sample_documents/10_kotlin_mobile_basics.md`
+- `sample_documents/11_compose_multiplatform_guide.md`
+- `sample_documents/12_mobile_architecture_release.md`
+
+Именно из них ожидаются основные факты по Kotlin, Compose Multiplatform и мобильной архитектуре.
 
 ### API Endpoints
 

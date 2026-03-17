@@ -29,6 +29,21 @@
       color: var(--text);
       overflow: hidden;
     }
+    body.assignment-mode {
+      overflow: auto;
+    }
+    body.assignment-mode .app {
+      height: auto;
+      min-height: 100dvh;
+      grid-template-rows: auto auto;
+    }
+    body.assignment-mode #prompt-form {
+      display: none;
+    }
+    body.assignment-mode .topbar .sub {
+      color: #c4d5ff;
+      font-size: 13px;
+    }
     .app {
       max-width: 1560px;
       margin: 0 auto;
@@ -465,12 +480,18 @@
     }
   </style>
 </head>
-<body>
+<body class="{% if assignment_mode %}assignment-mode{% endif %}">
   <div class="app">
     <div class="topbar">
       <div>
-        <h1>Assistant Control Center - Day 19</h1>
-        <div class="sub">Cleaner UI with progressive controls, invariant-first workflow, and conflict-safe responses.</div>
+        <h1>{% if assignment_mode %}Day 22 — RAG Quality Lab{% else %}Assistant Control Center - Day 19{% endif %}</h1>
+        <div class="sub">
+          {% if assignment_mode %}
+          Тестовый режим для задания: сравнение ответов без RAG и с RAG + 10 контрольных вопросов.
+          {% else %}
+          Cleaner UI with progressive controls, invariant-first workflow, and conflict-safe responses.
+          {% endif %}
+        </div>
         {% if status %}
         {% set status_lower = status|lower %}
         {% set status_class = "status-error" if ("failed" in status_lower or "blocked" in status_lower or "error" in status_lower) else "status-ok" %}
@@ -479,14 +500,23 @@
       </div>
       <div class="topbar-right">
         <a href="/document_indexer" class="btn-secondary-top" style="text-decoration:none;">📚 Document Indexer</a>
+        {% if assignment_mode %}
+        <a href="/?full=1" class="btn-secondary-top" style="text-decoration:none;">🧰 Full UI</a>
+        {% else %}
+        <a href="/" class="btn-secondary-top" style="text-decoration:none;">🎯 Assignment mode</a>
+        {% endif %}
+        {% if not assignment_mode %}
         <form method="post">
           <button type="submit" name="action" value="clear_all" class="btn-danger-top">Clear all state</button>
         </form>
+        {% endif %}
+        {% if not assignment_mode %}
         <div class="badges">
           <div class="badge">State: <strong>{{ state_path }}</strong></div>
           <div class="badge">Branch: <strong>{{ active_branch }}</strong></div>
           <div class="badge">Profile: <strong>{{ selected_profile }}</strong></div>
         </div>
+        {% endif %}
       </div>
     </div>
 
@@ -1146,6 +1176,15 @@
 
     <section class="rag-demo">
       <div class="rag-card">
+        <h2>Как тестировать задание</h2>
+        <p style="margin: 0; color: #c7d6ff;">
+          1) Введите вопрос и нажмите «Сравнить режимы».<br>
+          2) Сравните ответы: без RAG и с RAG.<br>
+          3) Проверьте источники и извлечённые чанки.<br>
+          4) Прогоните 10 контрольных вопросов ниже и зафиксируйте качество.
+        </p>
+      </div>
+      <div class="rag-card">
         <h2>Первый RAG-запрос</h2>
         <label for="rag-question">Вопрос</label>
         <textarea id="rag-question" placeholder="Например: Что такое Retrieval-Augmented Generation и как используются чанки?"></textarea>
@@ -1165,7 +1204,7 @@
             <strong>{{ item.question }}</strong>
             <p>{{ item.expectation }}</p>
             <p class="sources">Источники: {{ item.sources | join(', ') }}</p>
-            <button type="button" onclick="setRagQuestion('{{ item.question | e('js') }}')" class="btn-secondary" style="margin-top: 6px;">Проверить</button>
+            <button type="button" onclick='setRagQuestion({{ item.question | tojson }})' class="btn-secondary" style="margin-top: 6px;">Проверить</button>
           </div>
           {% endfor %}
         </div>

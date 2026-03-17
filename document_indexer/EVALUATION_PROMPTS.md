@@ -32,6 +32,12 @@ curl -X POST http://127.0.0.1:5052/api/index \
 
 ## Тестовые запросы для поиска
 
+> Для текущего Day 22 ориентируйтесь на mobile-базу знаний:
+> `sample_documents/10_kotlin_mobile_basics.md`,
+> `sample_documents/11_compose_multiplatform_guide.md`,
+> `sample_documents/12_mobile_architecture_release.md`.
+> Контрольные вопросы в UI берутся из `rag_control_questions.json`.
+
 ### Категория: Векторные базы данных
 
 ```
