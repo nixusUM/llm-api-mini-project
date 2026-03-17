@@ -1,0 +1,73 @@
+[
+  {
+    "question": "Что такое Retrieval-Augmented Generation и зачем он нужен?",
+    "expectation": "Объяснение паттерна RAG: поиск по базе знаний + расширение контекста + ответ от LLM.",
+    "sources": [
+      "sample_documents/01_vector_databases_guide.md",
+      "sample_documents/09_rag_pdf_brief.pdf"
+    ]
+  },
+  {
+    "question": "Какие алгоритмы индексирования ближайших соседей упомянуты?",
+    "expectation": "HNSW, IVF, PQ, LSH и краткое описание их особенностей.",
+    "sources": [
+      "sample_documents/01_vector_databases_guide.md"
+    ]
+  },
+  {
+    "question": "Как работает asyncio event loop в Python?",
+    "expectation": "Описание цикла событий, создания задач и методов await/gather.",
+    "sources": [
+      "sample_documents/02_python_async_guide.md"
+    ]
+  },
+  {
+    "question": "Какие паттерны используются для rate limiting в асинхронных системах?",
+    "expectation": "Token bucket, semaphore, wait_for, ограничения по скорости.",
+    "sources": [
+      "sample_documents/02_python_async_guide.md"
+    ]
+  },
+  {
+    "question": "Как устроен жизненный цикл ML-проекта?",
+    "expectation": "Сбор данных, обработка, обучение, кросс-валидация, оценка, оптимизация.",
+    "sources": [
+      "sample_documents/03_machine_learning_basics.md"
+    ]
+  },
+  {
+    "question": "Какие HTTP-методы остаются идемпотентными?",
+    "expectation": "GET, PUT, DELETE, OPTIONS (в зависимости от реализации) и объяснение.",
+    "sources": [
+      "sample_documents/04_api_design_principles.md"
+    ]
+  },
+  {
+    "question": "В чем разница между стеком и очередью?",
+    "expectation": "LIFO против FIFO, применение для undo/redo и BFS/DFS.",
+    "sources": [
+      "sample_documents/05_data_structures_algorithms.md"
+    ]
+  },
+  {
+    "question": "Что говорит CAP-теорема о распределенных системах?",
+    "expectation": "Consistency, Availability и Partition Tolerance — выбор двух из трех.",
+    "sources": [
+      "sample_documents/06_system_design.md"
+    ]
+  },
+  {
+    "question": "Как оптимизировать базу данных перед нагрузкой?",
+    "expectation": "Индексы (B-tree, GIN, partial), партиционирование, репликация, мониторинг.",
+    "sources": [
+      "sample_documents/07_database_optimization.md"
+    ]
+  },
+  {
+    "question": "Как хранить пароли безопасно?",
+    "expectation": "bcrypt/argon2, соль, MFA, проверка через hash и избежание хранения в открытом виде.",
+    "sources": [
+      "sample_documents/08_security_best_practices.md"
+    ]
+  }
+]

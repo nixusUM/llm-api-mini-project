@@ -226,6 +226,110 @@
       font-size: 13px;
       font-weight: 600;
     }
+    .rag-demo {
+      margin-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .rag-panel-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .rag-card {
+      background: #11182e;
+      color: #e5ecff;
+      padding: 18px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .rag-card textarea {
+      width: 100%;
+      min-height: 80px;
+      background: #0f1528;
+      color: #f7fbff;
+      border: 1px solid #1c2644;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .rag-card input {
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid #1c2644;
+      background: #0f1528;
+      color: #f7fbff;
+      padding: 8px 10px;
+    }
+    .rag-results {
+      margin-top: 12px;
+    }
+    .rag-panel {
+      background: #1b233f;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 14px;
+      line-height: 1.5;
+      max-height: 320px;
+      overflow: auto;
+    }
+    .rag-panel h3 {
+      margin-top: 0;
+      font-size: 16px;
+      color: #9ab7ff;
+    }
+    .rag-panel small {
+      color: #9ab7ff;
+      display: block;
+      margin-bottom: 6px;
+    }
+    .rag-panel .chunk-list {
+      margin-top: 10px;
+      padding-left: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .rag-panel .chunk-item {
+      border-left: 3px solid #2b7ee9;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.03);
+      border-radius: 4px;
+    }
+    .rag-panel .chunk-item strong {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #b0c7ff;
+    }
+    .rag-control-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+    }
+    .control-question {
+      background: #0e1220;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      padding: 12px;
+      font-size: 13px;
+    }
+    .control-question p {
+      margin: 6px 0;
+      color: #b7c1dd;
+    }
+    .control-question .sources {
+      font-size: 11px;
+      color: #7ea6ff;
+    }
+    .rag-loading {
+      text-align: center;
+      color: #cbd5f5;
+      padding: 20px 0;
+    }
     .spinner {
       width: 14px;
       height: 14px;
@@ -1039,6 +1143,34 @@
         </div>
       </aside>
     </form>
+
+    <section class="rag-demo">
+      <div class="rag-card">
+        <h2>Первый RAG-запрос</h2>
+        <label for="rag-question">Вопрос</label>
+        <textarea id="rag-question" placeholder="Например: Что такое Retrieval-Augmented Generation и как используются чанки?"></textarea>
+        <div class="field" style="margin-top: 10px;">
+          <label for="rag-top-k">Top-k блоков (1-10)</label>
+          <input id="rag-top-k" type="number" min="1" max="10" value="4">
+        </div>
+        <button type="button" class="btn-primary" onclick="runRagQuery()" style="margin-top: 10px;">Сравнить режимы</button>
+        <div id="rag-results" class="rag-results"></div>
+      </div>
+
+      <div class="rag-card">
+        <h2>Контрольные вопросы</h2>
+        <div class="rag-control-grid">
+          {% for item in rag_questions %}
+          <div class="control-question">
+            <strong>{{ item.question }}</strong>
+            <p>{{ item.expectation }}</p>
+            <p class="sources">Источники: {{ item.sources | join(', ') }}</p>
+            <button type="button" onclick="setRagQuestion('{{ item.question | e('js') }}')" class="btn-secondary" style="margin-top: 6px;">Проверить</button>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
   </div>
 
   <script>
@@ -1132,6 +1264,81 @@
         // Ignore polling errors silently.
       }
     };
+
+    const ragQuestionInput = document.getElementById("rag-question");
+    const ragTopKInput = document.getElementById("rag-top-k");
+    const ragResultsContainer = document.getElementById("rag-results");
+
+    const escapeHtml = (value) =>
+      String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+
+    async function runRagQuery() {
+      if (!ragQuestionInput || !ragResultsContainer) return;
+      const question = ragQuestionInput.value.trim();
+      if (!question) {
+        ragResultsContainer.innerHTML = '<div class="rag-loading">Введите вопрос.</div>';
+        return;
+      }
+      const topK = Math.min(10, Math.max(1, Number(ragTopKInput?.value || 4)));
+      ragResultsContainer.innerHTML = '<div class="rag-loading">Выполняются запросы к модели…</div>';
+      try {
+        const response = await fetch("/api/rag_query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, top_k: topK }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({ error: "Request failed" }));
+          throw new Error(payload.error || "Ошибка запроса");
+        }
+        const payload = await response.json();
+        renderRagResults(payload);
+      } catch (error) {
+        ragResultsContainer.innerHTML = `<div class="rag-loading">Ошибка: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    function renderRagResults(payload) {
+      if (!ragResultsContainer) return;
+      const noRag = payload.no_rag || {};
+      const rag = payload.rag || {};
+      const chunkItems = (rag.chunks || [])
+        .map(
+          (chunk) =>
+            `<div class="chunk-item"><strong>${escapeHtml(chunk.chunk_id)}</strong><div>${escapeHtml(chunk.text)}</div><small>${escapeHtml(
+              chunk.source
+            )} / ${escapeHtml(chunk.section)} (${escapeHtml(chunk.score)})</small></div>`
+        )
+        .join("");
+      const sources = (rag.sources || []).map((src) => escapeHtml(src)).join(", ");
+      ragResultsContainer.innerHTML = `
+        <div class="rag-panel-grid">
+          <div class="rag-panel">
+            <h3>Без RAG</h3>
+            <small>${escapeHtml(noRag.model || "model")}, токенов: ${escapeHtml(noRag.tokens || 0)}</small>
+            <p>${escapeHtml(noRag.text)}</p>
+          </div>
+          <div class="rag-panel">
+            <h3>С RAG</h3>
+            <small>${escapeHtml(rag.model || "model")}, токенов: ${escapeHtml(rag.tokens || 0)}</small>
+            <p>${escapeHtml(rag.text)}</p>
+            <p class="sources">Источники: ${sources || "—"}</p>
+            <div class="chunk-list">${chunkItems || "<div class='rag-loading'>Нет извлечённых чанков.</div>"}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function setRagQuestion(value) {
+      if (!ragQuestionInput) return;
+      ragQuestionInput.value = value;
+      runRagQuery();
+    }
     setInterval(pollScheduler, 8000);
   </script>
 </body>

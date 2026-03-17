@@ -15,9 +15,11 @@ from mcp_list_tools import list_mcp_tools_sync
 from mcp_orchestrator import get_tool_to_server_map
 from mcp_orchestrator import run_long_flow
 from mcp_orchestrator import SERVERS
+from rag_service import RAGService
 
 app = Flask(__name__)
 agent = LLMAgent()
+rag_service = RAGService()
 DEFAULT_MODEL_ID = "claude-3-haiku-20240307"
 STRATEGIES = ("sliding", "facts", "branching")
 SCHEDULER_LOCK = threading.Lock()
@@ -874,6 +876,7 @@ def index():
         history=history,
         token_growth=token_growth,
         state_path=state_path,
+        rag_questions=rag_service.control_questions(),
     )
 
 
@@ -892,6 +895,17 @@ def scheduler_status():
             "last_report": report,
         }
     )
+
+
+@app.route("/api/rag_query", methods=["POST"])
+def api_rag_query():
+    payload = request.get_json(force=True, silent=True) or {}
+    question = str(payload.get("question", "")).strip()
+    top_k = int(payload.get("top_k", rag_service.top_k))
+    if not question:
+        return jsonify({"error": "Question is empty."}), 400
+    result = rag_service.answer_question(question, top_k=top_k)
+    return jsonify(result)
 
 
 # Document Indexer routes

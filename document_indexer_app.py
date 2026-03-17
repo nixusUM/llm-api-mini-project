@@ -21,6 +21,12 @@ from document_indexer import (
     IndexerPipeline,
 )
 
+from document_indexer.corpus import (
+    collect_corpus_paths,
+    relative_path,
+    resolve_selected_path,
+)
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -37,56 +43,6 @@ indexing_state = {
     "last_result": None,
     "comparison_result": None,
 }
-
-
-def _collect_corpus_paths() -> list[Path]:
-    """Build assignment-ready corpus: README + articles + code + pdf."""
-    paths: list[Path] = []
-
-    readme_path = PROJECT_ROOT / "README.md"
-    if readme_path.exists():
-        paths.append(readme_path)
-
-    if SAMPLE_DOCS_DIR.exists():
-        for ext in ("*.md", "*.txt", "*.pdf"):
-            paths.extend(sorted(SAMPLE_DOCS_DIR.glob(ext)))
-
-    for py_file in sorted(PROJECT_ROOT.glob("*.py")):
-        paths.append(py_file)
-
-    indexer_dir = PROJECT_ROOT / "document_indexer"
-    if indexer_dir.exists():
-        paths.extend(sorted(indexer_dir.glob("*.py")))
-
-    # De-duplicate while preserving order
-    unique: list[Path] = []
-    seen = set()
-    for item in paths:
-        key = str(item.resolve())
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-    return unique
-
-
-def _relative_path(path: Path) -> str:
-    """Path displayed in UI and used by API."""
-    return str(path.relative_to(PROJECT_ROOT))
-
-
-def _resolve_selected_path(relative_path: str) -> Path | None:
-    """Resolve selected document path safely inside project root."""
-    try:
-        resolved = (PROJECT_ROOT / relative_path).resolve()
-    except Exception:
-        return None
-    if not str(resolved).startswith(str(PROJECT_ROOT.resolve())):
-        return None
-    if not resolved.exists() or not resolved.is_file():
-        return None
-    return resolved
-
-
 def get_or_create_pipeline(strategy: str, storage_type: str = "faiss"):
     """Get or create indexing pipeline with specified strategy."""
     cache_key = f"{strategy}_{storage_type}"
@@ -135,8 +91,8 @@ def get_or_create_pipeline(strategy: str, storage_type: str = "faiss"):
 def document_indexer():
     """Main page for document indexer."""
     docs = [
-        {"name": _relative_path(path), "size": path.stat().st_size}
-        for path in _collect_corpus_paths()
+        {"name": relative_path(path), "size": path.stat().st_size}
+        for path in collect_corpus_paths()
     ]
 
     # Get pipeline stats
@@ -168,7 +124,7 @@ def api_documents():
     """List available documents."""
     loader = DocumentLoader()
     documents = []
-    for path in _collect_corpus_paths():
+    for path in collect_corpus_paths():
         doc = loader.load_file(str(path))
         if doc:
             documents.append(doc)
@@ -201,14 +157,14 @@ def api_index():
     docs_to_index = []
     if documents:
         for doc_path in documents:
-            full_path = _resolve_selected_path(doc_path)
+            full_path = resolve_selected_path(doc_path)
             if not full_path:
                 continue
             doc = loader.load_file(str(full_path))
             if doc:
                 docs_to_index.append(doc)
     else:
-        for path in _collect_corpus_paths():
+        for path in collect_corpus_paths():
             doc = loader.load_file(str(path))
             if doc:
                 docs_to_index.append(doc)
@@ -251,7 +207,7 @@ def api_compare():
 
     # Load document
     loader = DocumentLoader()
-    doc_path = _resolve_selected_path(doc_source)
+    doc_path = resolve_selected_path(doc_source)
     if not doc_path:
         return jsonify({"error": "Document not found"}), 404
 
