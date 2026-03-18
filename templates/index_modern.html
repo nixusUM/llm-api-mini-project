@@ -1176,21 +1176,38 @@
 
     <section class="rag-demo">
       <div class="rag-card">
-        <h2>Как тестировать задание</h2>
+        <h2>Как тестировать задание (Day 23)</h2>
         <p style="margin: 0; color: #c7d6ff;">
           1) Введите вопрос и нажмите «Сравнить режимы».<br>
-          2) Сравните ответы: без RAG и с RAG.<br>
-          3) Проверьте источники и извлечённые чанки.<br>
-          4) Прогоните 10 контрольных вопросов ниже и зафиксируйте качество.
+          2) Сравните RAG baseline (без rewrite/filter) и improved (с rewrite + rerank/filter).<br>
+          3) Проверьте порог отсечения и Top-K до/после фильтрации.<br>
+          4) Прогоните 10 контрольных вопросов и зафиксируйте улучшение качества.
         </p>
       </div>
       <div class="rag-card">
-        <h2>Первый RAG-запрос</h2>
+        <h2>RAG с реранкингом и фильтрацией</h2>
         <label for="rag-question">Вопрос</label>
-        <textarea id="rag-question" placeholder="Например: Что такое Retrieval-Augmented Generation и как используются чанки?"></textarea>
-        <div class="field" style="margin-top: 10px;">
-          <label for="rag-top-k">Top-k блоков (1-10)</label>
-          <input id="rag-top-k" type="number" min="1" max="10" value="4">
+        <textarea id="rag-question" placeholder="Например: Как в Compose уменьшать лишние recomposition?"></textarea>
+        <div class="rag-panel-grid" style="margin-top: 10px;">
+          <div class="field">
+            <label for="rag-top-k-before">Top-k до rerank/filter (1-20)</label>
+            <input id="rag-top-k-before" type="number" min="1" max="20" value="8">
+          </div>
+          <div class="field">
+            <label for="rag-top-k-after">Top-k после filter (1-10)</label>
+            <input id="rag-top-k-after" type="number" min="1" max="10" value="4">
+          </div>
+          <div class="field">
+            <label for="rag-threshold">Порог релевантности (0.0–1.0)</label>
+            <input id="rag-threshold" type="number" min="0" max="1" step="0.01" value="0.52">
+          </div>
+          <div class="field">
+            <label for="rag-rewrite">Query rewrite</label>
+            <select id="rag-rewrite">
+              <option value="on" selected>Включен</option>
+              <option value="off">Выключен</option>
+            </select>
+          </div>
         </div>
         <button type="button" class="btn-primary" onclick="runRagQuery()" style="margin-top: 10px;">Сравнить режимы</button>
         <div id="rag-results" class="rag-results"></div>
@@ -1305,7 +1322,10 @@
     };
 
     const ragQuestionInput = document.getElementById("rag-question");
-    const ragTopKInput = document.getElementById("rag-top-k");
+    const ragTopKBeforeInput = document.getElementById("rag-top-k-before");
+    const ragTopKAfterInput = document.getElementById("rag-top-k-after");
+    const ragThresholdInput = document.getElementById("rag-threshold");
+    const ragRewriteInput = document.getElementById("rag-rewrite");
     const ragResultsContainer = document.getElementById("rag-results");
 
     const escapeHtml = (value) =>
@@ -1323,13 +1343,22 @@
         ragResultsContainer.innerHTML = '<div class="rag-loading">Введите вопрос.</div>';
         return;
       }
-      const topK = Math.min(10, Math.max(1, Number(ragTopKInput?.value || 4)));
+      const topKBefore = Math.min(20, Math.max(1, Number(ragTopKBeforeInput?.value || 8)));
+      const topKAfter = Math.min(10, Math.max(1, Number(ragTopKAfterInput?.value || 4)));
+      const threshold = Math.min(1, Math.max(0, Number(ragThresholdInput?.value || 0.52)));
+      const rewriteEnabled = (ragRewriteInput?.value || "on") === "on";
       ragResultsContainer.innerHTML = '<div class="rag-loading">Выполняются запросы к модели…</div>';
       try {
         const response = await fetch("/api/rag_query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question, top_k: topK }),
+          body: JSON.stringify({
+            question,
+            top_k_before: topKBefore,
+            top_k_after: topKAfter,
+            threshold,
+            enable_query_rewrite: rewriteEnabled
+          }),
         });
         if (!response.ok) {
           const payload = await response.json().catch(() => ({ error: "Request failed" }));
@@ -1344,30 +1373,53 @@
 
     function renderRagResults(payload) {
       if (!ragResultsContainer) return;
-      const noRag = payload.no_rag || {};
-      const rag = payload.rag || {};
-      const chunkItems = (rag.chunks || [])
+      const baseline = payload.baseline || {};
+      const improved = payload.improved || {};
+      const settings = payload.settings || {};
+      const rewrite = payload.query_rewrite || {};
+
+      const baselineItems = (baseline.chunks_after || [])
         .map(
           (chunk) =>
             `<div class="chunk-item"><strong>${escapeHtml(chunk.chunk_id)}</strong><div>${escapeHtml(chunk.text)}</div><small>${escapeHtml(
               chunk.source
-            )} / ${escapeHtml(chunk.section)} (${escapeHtml(chunk.score)})</small></div>`
+            )} / ${escapeHtml(chunk.section)} | v:${escapeHtml(chunk.vector_score)} f:${escapeHtml(chunk.final_score)}</small></div>`
         )
         .join("");
-      const sources = (rag.sources || []).map((src) => escapeHtml(src)).join(", ");
+      const improvedItems = (improved.chunks_after || [])
+        .map(
+          (chunk) =>
+            `<div class="chunk-item"><strong>${escapeHtml(chunk.chunk_id)}</strong><div>${escapeHtml(chunk.text)}</div><small>${escapeHtml(
+              chunk.source
+            )} / ${escapeHtml(chunk.section)} | v:${escapeHtml(chunk.vector_score)} r:${escapeHtml(chunk.rerank_score)} f:${escapeHtml(chunk.final_score)}</small></div>`
+        )
+        .join("");
+      const baselineSources = (baseline.sources || []).map((src) => escapeHtml(src)).join(", ");
+      const improvedSources = (improved.sources || []).map((src) => escapeHtml(src)).join(", ");
+
       ragResultsContainer.innerHTML = `
+        <div class="rag-panel" style="margin-bottom: 12px;">
+          <h3>Настройки и rewrite</h3>
+          <small>threshold=${escapeHtml(settings.threshold)} | top-k до=${escapeHtml(settings.top_k_before)} | top-k после=${escapeHtml(settings.top_k_after)} | rewrite=${escapeHtml(settings.rewrite_enabled)}</small>
+          <p><strong>Оригинал:</strong> ${escapeHtml(rewrite.original || "")}</p>
+          <p><strong>Rewritten:</strong> ${escapeHtml(rewrite.rewritten || "")}</p>
+        </div>
         <div class="rag-panel-grid">
           <div class="rag-panel">
-            <h3>Без RAG</h3>
-            <small>${escapeHtml(noRag.model || "model")}, токенов: ${escapeHtml(noRag.tokens || 0)}</small>
-            <p>${escapeHtml(noRag.text)}</p>
+            <h3>Baseline RAG (без rewrite/filter)</h3>
+            <small>${escapeHtml(baseline.model || "model")}, токенов: ${escapeHtml(baseline.tokens || 0)}</small>
+            <p>${escapeHtml(baseline.text)}</p>
+            <p class="sources">Источники: ${baselineSources || "—"}</p>
+            <p><small>Top-k до: ${(baseline.chunks_before || []).length}, после: ${(baseline.chunks_after || []).length}</small></p>
+            <div class="chunk-list">${baselineItems || "<div class='rag-loading'>Нет чанков.</div>"}</div>
           </div>
           <div class="rag-panel">
-            <h3>С RAG</h3>
-            <small>${escapeHtml(rag.model || "model")}, токенов: ${escapeHtml(rag.tokens || 0)}</small>
-            <p>${escapeHtml(rag.text)}</p>
-            <p class="sources">Источники: ${sources || "—"}</p>
-            <div class="chunk-list">${chunkItems || "<div class='rag-loading'>Нет извлечённых чанков.</div>"}</div>
+            <h3>Improved RAG (rewrite + rerank/filter)</h3>
+            <small>${escapeHtml(improved.model || "model")}, токенов: ${escapeHtml(improved.tokens || 0)}</small>
+            <p>${escapeHtml(improved.text)}</p>
+            <p class="sources">Источники: ${improvedSources || "—"}</p>
+            <p><small>Top-k до: ${(improved.chunks_before || []).length}, после: ${(improved.chunks_after || []).length}, отфильтровано: ${escapeHtml(improved.filtered_out || 0)}</small></p>
+            <div class="chunk-list">${improvedItems || "<div class='rag-loading'>Нет чанков.</div>"}</div>
           </div>
         </div>
       `;

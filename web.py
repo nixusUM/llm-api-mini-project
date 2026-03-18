@@ -903,10 +903,19 @@ def scheduler_status():
 def api_rag_query():
     payload = request.get_json(force=True, silent=True) or {}
     question = str(payload.get("question", "")).strip()
-    top_k = int(payload.get("top_k", rag_service.top_k))
+    top_k_before = int(payload.get("top_k_before", rag_service.default_top_k_before))
+    top_k_after = int(payload.get("top_k_after", rag_service.default_top_k_after))
+    threshold = float(payload.get("threshold", rag_service.default_threshold))
+    enable_query_rewrite = bool(payload.get("enable_query_rewrite", True))
     if not question:
         return jsonify({"error": "Question is empty."}), 400
-    result = rag_service.answer_question(question, top_k=top_k)
+    result = rag_service.answer_question(
+        question=question,
+        top_k_before=top_k_before,
+        top_k_after=top_k_after,
+        threshold=threshold,
+        enable_query_rewrite=enable_query_rewrite,
+    )
     return jsonify(result)
 
 
