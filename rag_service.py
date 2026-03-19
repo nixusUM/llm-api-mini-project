@@ -36,7 +36,7 @@ class ChunkSnippet:
 class RAGService:
     def __init__(self):
         self._pipeline: Optional[IndexerPipeline] = None
-        self.model_id = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
+        self.model_id = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
         self.temperature = float(os.getenv("RAG_TEMPERATURE", "0.35"))
         self.max_tokens = int(os.getenv("RAG_MAX_TOKENS", "500"))
         self.default_top_k_before = int(os.getenv("RAG_TOP_K_BEFORE", "8"))
@@ -79,6 +79,16 @@ class RAGService:
         improved_prompt = self._build_context_prompt(question, improved_final)
         baseline_answer = self._call_llm(baseline_prompt, rag_mode=True)
         improved_answer = self._call_llm(improved_prompt, rag_mode=True)
+        baseline_payload = self._build_mode_payload(
+            llm_text=baseline_answer["text"],
+            chunks=baseline_final,
+            threshold=threshold_value,
+        )
+        improved_payload = self._build_mode_payload(
+            llm_text=improved_answer["text"],
+            chunks=improved_final,
+            threshold=threshold_value,
+        )
 
         return {
             "question": question,
@@ -95,23 +105,81 @@ class RAGService:
             },
             "baseline": {
                 "label": "Без rewrite/filter",
-                "text": baseline_answer["text"],
+                "text": baseline_payload["text"],
+                "answer": baseline_payload["answer"],
+                "sources": baseline_payload["sources"],
+                "quotes": baseline_payload["quotes"],
+                "weak_context": baseline_payload["weak_context"],
+                "has_sources": baseline_payload["has_sources"],
+                "has_quotes": baseline_payload["has_quotes"],
                 "model": baseline_answer["model"],
                 "tokens": baseline_answer["total_tokens"],
                 "chunks_before": [self._chunk_to_dict(c) for c in baseline_chunks],
                 "chunks_after": [self._chunk_to_dict(c) for c in baseline_final],
-                "sources": sorted({c.source for c in baseline_final}),
             },
             "improved": {
                 "label": "С rewrite + rerank/filter",
-                "text": improved_answer["text"],
+                "text": improved_payload["text"],
+                "answer": improved_payload["answer"],
+                "sources": improved_payload["sources"],
+                "quotes": improved_payload["quotes"],
+                "weak_context": improved_payload["weak_context"],
+                "has_sources": improved_payload["has_sources"],
+                "has_quotes": improved_payload["has_quotes"],
                 "model": improved_answer["model"],
                 "tokens": improved_answer["total_tokens"],
                 "chunks_before": [self._chunk_to_dict(c) for c in improved_candidates],
                 "chunks_after": [self._chunk_to_dict(c) for c in improved_final],
-                "sources": sorted({c.source for c in improved_final}),
                 "filtered_out": max(0, len(reranked) - len(improved_final)),
             },
+        }
+
+    def evaluate_control_questions(
+        self,
+        top_k_before: Optional[int] = None,
+        top_k_after: Optional[int] = None,
+        threshold: Optional[float] = None,
+        enable_query_rewrite: bool = True,
+    ) -> Dict[str, Any]:
+        reports: List[Dict[str, Any]] = []
+        for item in self._questions:
+            question = str(item.get("question", "")).strip()
+            expectation = str(item.get("expectation", "")).strip()
+            if not question:
+                continue
+            result = self.answer_question(
+                question=question,
+                top_k_before=top_k_before,
+                top_k_after=top_k_after,
+                threshold=threshold,
+                enable_query_rewrite=enable_query_rewrite,
+            )
+            improved = result.get("improved", {})
+            semantic_ok = self._semantic_match(
+                expectation=expectation,
+                answer=str(improved.get("answer", "")),
+                quotes=improved.get("quotes", []),
+            )
+            reports.append(
+                {
+                    "question": question,
+                    "expectation": expectation,
+                    "expected_sources": item.get("sources", []),
+                    "sources_present": bool(improved.get("has_sources")),
+                    "quotes_present": bool(improved.get("has_quotes")),
+                    "semantic_match": semantic_ok,
+                    "weak_context": bool(improved.get("weak_context", False)),
+                    "used_sources": [s.get("source", "") for s in improved.get("sources", [])],
+                }
+            )
+
+        total = len(reports)
+        return {
+            "total_questions": total,
+            "sources_ok": sum(1 for x in reports if x["sources_present"]),
+            "quotes_ok": sum(1 for x in reports if x["quotes_present"]),
+            "semantic_ok": sum(1 for x in reports if x["semantic_match"]),
+            "reports": reports,
         }
 
     def _chunk_to_dict(self, chunk: ChunkSnippet) -> Dict[str, Any]:
@@ -201,6 +269,31 @@ class RAGService:
             "Ответ:"
         )
 
+    def _build_mode_payload(
+        self, llm_text: str, chunks: List[ChunkSnippet], threshold: float
+    ) -> Dict[str, Any]:
+        weak_context = self._is_weak_context(chunks, threshold)
+        if weak_context:
+            answer = (
+                "Не знаю. По текущему контексту недостаточно релевантных фрагментов, "
+                "чтобы дать надежный ответ. Уточните вопрос (например, платформу, API или конкретный кейс)."
+            )
+            sources: List[Dict[str, str]] = []
+            quotes: List[Dict[str, str]] = []
+        else:
+            answer = self._sanitize_rag_text(llm_text)
+            sources = self._collect_sources(chunks)
+            quotes = self._collect_quotes(chunks)
+        return {
+            "answer": answer,
+            "sources": sources,
+            "quotes": quotes,
+            "weak_context": weak_context,
+            "has_sources": bool(sources),
+            "has_quotes": bool(quotes),
+            "text": self._format_response(answer, sources, quotes),
+        }
+
     def _rewrite_query(self, question: str) -> str:
         q = question.strip()
         if not q:
@@ -244,6 +337,88 @@ class RAGService:
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
         }
+
+    def _sanitize_rag_text(self, text: str) -> str:
+        value = (text or "").strip()
+        if not value:
+            return "Не знаю. Уточните вопрос, чтобы я нашел более релевантные фрагменты."
+        weak_patterns = (
+            "к сожалению",
+            "не могу найти",
+            "недостаточно информации",
+            "нет информации",
+            "в предоставленных фрагментах нет",
+        )
+        lowered = value.lower()
+        if any(marker in lowered for marker in weak_patterns):
+            cleaned = re.sub(
+                r"(?i)к сожалению[,:\s]*",
+                "",
+                value,
+            ).strip()
+            cleaned = re.sub(r"\s{2,}", " ", cleaned)
+            if cleaned:
+                return cleaned
+            return "Не знаю. Уточните вопрос, чтобы я нашел более релевантные фрагменты."
+        return value
+
+    def _collect_sources(self, chunks: List[ChunkSnippet]) -> List[Dict[str, str]]:
+        unique: List[Dict[str, str]] = []
+        seen = set()
+        for chunk in chunks:
+            key = (chunk.source, chunk.section, chunk.chunk_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(
+                {
+                    "source": chunk.source,
+                    "section": chunk.section,
+                    "chunk_id": chunk.chunk_id,
+                }
+            )
+        return unique
+
+    def _collect_quotes(self, chunks: List[ChunkSnippet]) -> List[Dict[str, str]]:
+        quotes: List[Dict[str, str]] = []
+        for chunk in chunks[:3]:
+            text = chunk.text
+            if len(text) > 220:
+                text = text[:220].rsplit(" ", 1)[0] + "…"
+            quotes.append(
+                {
+                    "quote": text,
+                    "source": chunk.source,
+                    "section": chunk.section,
+                    "chunk_id": chunk.chunk_id,
+                }
+            )
+        return quotes
+
+    def _format_response(
+        self,
+        answer: str,
+        sources: List[Dict[str, str]],
+        quotes: List[Dict[str, str]],
+    ) -> str:
+        lines = [answer.strip(), "", "Источники:"]
+        if sources:
+            for src in sources:
+                lines.append(
+                    f"- {src['source']} | {src['section']} | {src['chunk_id']}"
+                )
+        else:
+            lines.append("- нет достоверных источников выше порога")
+        lines.append("")
+        lines.append("Цитаты:")
+        if quotes:
+            for item in quotes:
+                lines.append(
+                    f"- \"{item['quote']}\" ({item['source']} | {item['section']} | {item['chunk_id']})"
+                )
+        else:
+            lines.append("- нет цитат (недостаточная релевантность контекста)")
+        return "\n".join(lines)
 
     def _ensure_indexed(self):
         if self._pipeline:
@@ -295,6 +470,12 @@ class RAGService:
         except Exception:
             return []
 
+    def _is_weak_context(self, chunks: List[ChunkSnippet], threshold: float) -> bool:
+        if not chunks:
+            return True
+        max_score = max(c.final_score for c in chunks)
+        return max_score < threshold
+
     def _normalize_vector_score(self, raw: float) -> float:
         normalized = (float(raw) + 1.0) / 2.0
         return max(0.0, min(normalized, 1.0))
@@ -306,3 +487,16 @@ class RAGService:
         if not left or not right:
             return 0.0
         return len(left & right) / max(len(left), 1)
+
+    def _semantic_match(
+        self, expectation: str, answer: str, quotes: List[Dict[str, str]]
+    ) -> bool:
+        exp_tokens = self._tokenize(expectation)
+        if not exp_tokens:
+            return True
+        material = answer + " " + " ".join(q.get("quote", "") for q in quotes)
+        mat_tokens = self._tokenize(material)
+        if not mat_tokens:
+            return False
+        overlap = len(exp_tokens & mat_tokens) / max(len(exp_tokens), 1)
+        return overlap >= 0.18

@@ -20,7 +20,7 @@ from rag_service import RAGService
 app = Flask(__name__)
 agent = LLMAgent()
 rag_service = RAGService()
-DEFAULT_MODEL_ID = "claude-3-haiku-20240307"
+DEFAULT_MODEL_ID = "claude-3-5-haiku-latest"
 STRATEGIES = ("sliding", "facts", "branching")
 SCHEDULER_LOCK = threading.Lock()
 SCHEDULER_STOP_EVENT = threading.Event()
@@ -911,6 +911,22 @@ def api_rag_query():
         return jsonify({"error": "Question is empty."}), 400
     result = rag_service.answer_question(
         question=question,
+        top_k_before=top_k_before,
+        top_k_after=top_k_after,
+        threshold=threshold,
+        enable_query_rewrite=enable_query_rewrite,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/rag_audit", methods=["POST"])
+def api_rag_audit():
+    payload = request.get_json(force=True, silent=True) or {}
+    top_k_before = int(payload.get("top_k_before", rag_service.default_top_k_before))
+    top_k_after = int(payload.get("top_k_after", rag_service.default_top_k_after))
+    threshold = float(payload.get("threshold", rag_service.default_threshold))
+    enable_query_rewrite = bool(payload.get("enable_query_rewrite", True))
+    result = rag_service.evaluate_control_questions(
         top_k_before=top_k_before,
         top_k_after=top_k_after,
         threshold=threshold,

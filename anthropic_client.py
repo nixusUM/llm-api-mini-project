@@ -4,10 +4,10 @@ from anthropic import Anthropic
 from anthropic import APIStatusError
 
 PREFERRED_MODELS = (
+    "claude-3-5-haiku-latest",
     "claude-sonnet-4-5",
     "claude-3-7-sonnet-latest",
     "claude-3-5-sonnet-latest",
-    "claude-3-5-haiku-latest",
 )
 
 
