@@ -878,6 +878,7 @@ def index():
         token_growth=token_growth,
         state_path=state_path,
         rag_questions=rag_service.control_questions(),
+        rag_chat_scenarios=rag_service.chat_scenarios(),
         assignment_mode=assignment_mode,
     )
 
@@ -931,6 +932,54 @@ def api_rag_audit():
         top_k_after=top_k_after,
         threshold=threshold,
         enable_query_rewrite=enable_query_rewrite,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/rag_chat", methods=["POST"])
+def api_rag_chat():
+    payload = request.get_json(force=True, silent=True) or {}
+    session_id = str(payload.get("session_id", "default")).strip()
+    question = str(payload.get("question", "")).strip()
+    top_k_before = int(payload.get("top_k_before", rag_service.default_top_k_before))
+    top_k_after = int(payload.get("top_k_after", rag_service.default_top_k_after))
+    threshold = float(payload.get("threshold", rag_service.default_threshold))
+    if not question:
+        return jsonify({"error": "Question is empty."}), 400
+    result = rag_service.chat_turn(
+        session_id=session_id,
+        question=question,
+        top_k_before=top_k_before,
+        top_k_after=top_k_after,
+        threshold=threshold,
+    )
+    return jsonify(result)
+
+
+@app.route("/api/rag_chat_reset", methods=["POST"])
+def api_rag_chat_reset():
+    payload = request.get_json(force=True, silent=True) or {}
+    session_id = str(payload.get("session_id", "default")).strip()
+    result = rag_service.reset_chat_session(session_id)
+    return jsonify(
+        {
+            "session_id": result.get("id", session_id),
+            "task_state": result.get("task_state", {}),
+            "history": result.get("history", []),
+        }
+    )
+
+
+@app.route("/api/rag_chat_scenarios", methods=["POST"])
+def api_rag_chat_scenarios():
+    payload = request.get_json(force=True, silent=True) or {}
+    top_k_before = int(payload.get("top_k_before", rag_service.default_top_k_before))
+    top_k_after = int(payload.get("top_k_after", rag_service.default_top_k_after))
+    threshold = float(payload.get("threshold", rag_service.default_threshold))
+    result = rag_service.evaluate_chat_scenarios(
+        top_k_before=top_k_before,
+        top_k_after=top_k_after,
+        threshold=threshold,
     )
     return jsonify(result)
 

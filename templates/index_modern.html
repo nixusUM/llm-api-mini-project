@@ -345,6 +345,147 @@
       color: #cbd5f5;
       padding: 20px 0;
     }
+    .rag-chat-shell {
+      margin-top: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      background: #0d1429;
+      overflow: hidden;
+      height: 680px;
+      display: flex;
+      flex-direction: column;
+    }
+    .rag-chat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      background: #111a35;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .rag-chat-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 320px) 1fr;
+      flex: 1;
+      min-height: 0;
+    }
+    .rag-chat-sidebar {
+      border-right: 1px solid rgba(255, 255, 255, 0.07);
+      padding: 12px;
+      background: #0f1934;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+      overflow-y: auto;
+    }
+    .rag-chat-main {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      min-height: 0;
+      height: 100%;
+      background: #0b1224;
+      overflow: hidden;
+    }
+    .rag-chat-window {
+      min-height: 0;
+      height: 100%;
+      overflow-y: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .rag-chat-row {
+      display: flex;
+      width: 100%;
+    }
+    .rag-chat-row.user {
+      justify-content: flex-end;
+    }
+    .rag-chat-row.assistant {
+      justify-content: flex-start;
+    }
+    .rag-chat-bubble {
+      max-width: min(78%, 760px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 12px;
+      padding: 9px 11px;
+      line-height: 1.45;
+      font-size: 14px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .rag-chat-bubble.user {
+      background: #1d3d73;
+      color: #f4f8ff;
+      border-color: rgba(150, 190, 255, 0.3);
+      border-bottom-right-radius: 4px;
+    }
+    .rag-chat-bubble.assistant {
+      background: #19233f;
+      color: #e7edff;
+      border-bottom-left-radius: 4px;
+    }
+    .rag-chat-meta {
+      display: block;
+      font-size: 11px;
+      color: #93acdf;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .rag-chat-composer {
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      padding: 10px 12px;
+      background: #101932;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: end;
+      position: sticky;
+      bottom: 0;
+      z-index: 2;
+    }
+    .rag-chat-composer textarea {
+      min-height: 72px;
+      max-height: 180px;
+      resize: vertical;
+    }
+    .rag-chat-state-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 10px;
+      background: #0f1528;
+    }
+    .rag-chat-state-card p {
+      margin: 6px 0;
+      font-size: 13px;
+      color: #dbe6ff;
+    }
+    .rag-chat-small {
+      font-size: 12px;
+      color: #9ab7ff;
+    }
+    @media (max-width: 980px) {
+      .rag-chat-shell {
+        height: 760px;
+      }
+      .rag-chat-layout {
+        grid-template-columns: 1fr;
+        flex: 1;
+      }
+      .rag-chat-sidebar {
+        border-right: none;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+        max-height: 240px;
+      }
+      .rag-chat-bubble {
+        max-width: 92%;
+      }
+    }
     .spinner {
       width: 14px;
       height: 14px;
@@ -1216,6 +1357,44 @@
       </div>
 
       <div class="rag-card">
+        <h2>Мини-чат с RAG + памятью задачи</h2>
+        <div class="rag-chat-shell">
+          <div class="rag-chat-header">
+            <div class="field" style="margin: 0; min-width: 240px;">
+              <label for="rag-chat-session">Session ID</label>
+              <input id="rag-chat-session" type="text" value="day25-demo">
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <button type="button" class="btn-primary" onclick="runRagChat()">Отправить</button>
+              <button type="button" class="btn-secondary" onclick="resetRagChat()">Сбросить сессию</button>
+              <button type="button" class="btn-secondary" onclick="runRagChatScenarios()">Прогнать 2 длинных сценария</button>
+            </div>
+          </div>
+          <div class="rag-chat-layout">
+            <aside class="rag-chat-sidebar">
+              <div id="rag-chat-task-state" class="rag-chat-state-card"></div>
+              <div class="rag-chat-state-card">
+                <h3 style="margin-top: 0;">Сценарии для проверки</h3>
+                <ul class="list">
+                  {% for scenario in rag_chat_scenarios %}
+                  <li><strong>{{ scenario.title }}</strong> — {{ scenario.messages | length }} сообщений</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              <div id="rag-chat-scenarios" class="rag-results"></div>
+            </aside>
+            <section class="rag-chat-main">
+              <div id="rag-chat-history" class="rag-chat-window"></div>
+              <div class="rag-chat-composer">
+                <textarea id="rag-chat-question" placeholder="Опишите цель, ограничения и задайте следующий вопрос"></textarea>
+                <button type="button" class="btn-primary" onclick="runRagChat()">Отправить</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <div class="rag-card">
         <h2>Контрольные вопросы</h2>
         <div class="rag-control-grid">
           {% for item in rag_questions %}
@@ -1330,6 +1509,12 @@
     const ragRewriteInput = document.getElementById("rag-rewrite");
     const ragResultsContainer = document.getElementById("rag-results");
     const ragAuditResultsContainer = document.getElementById("rag-audit-results");
+    const ragChatSessionInput = document.getElementById("rag-chat-session");
+    const ragChatQuestionInput = document.getElementById("rag-chat-question");
+    const ragChatTaskStateContainer = document.getElementById("rag-chat-task-state");
+    const ragChatHistoryContainer = document.getElementById("rag-chat-history");
+    const ragChatScenariosContainer = document.getElementById("rag-chat-scenarios");
+    let ragChatIsSending = false;
 
     const escapeHtml = (value) =>
       String(value || "")
@@ -1515,6 +1700,209 @@
           </div>
         </div>
       `;
+    }
+
+    function renderRagChat(payload) {
+      if (!ragChatTaskStateContainer || !ragChatHistoryContainer) return;
+      const state = payload.task_state || {};
+      const history = payload.history || [];
+      const sources = renderSources(payload.sources || []);
+      const quotes = renderQuotes(payload.quotes || []);
+      ragChatTaskStateContainer.innerHTML = `
+        <h3 style="margin-top: 0;">Память задачи</h3>
+        <p><strong>Цель:</strong> ${escapeHtml(state.goal || "—")}</p>
+        <p><strong>Ограничения:</strong> ${escapeHtml((state.constraints || []).join(" | ") || "—")}</p>
+        <p><strong>Термины:</strong> ${escapeHtml((state.terms || []).join(", ") || "—")}</p>
+        <p class="rag-chat-small">session_id=${escapeHtml(payload.session_id || "")} | weak_context=${escapeHtml(String(Boolean(payload.weak_context)))}</p>
+      `;
+      const items = history
+        .map(
+          (msg) => `
+            <div class="rag-chat-row ${msg.role === "user" ? "user" : "assistant"}">
+              <div class="rag-chat-bubble ${msg.role === "user" ? "user" : "assistant"}">
+                <span class="rag-chat-meta">${escapeHtml(msg.role === "user" ? "you" : "assistant")}</span>
+                <div>${escapeHtml(msg.content || "")}</div>
+              </div>
+            </div>
+          `
+        )
+        .join("");
+      ragChatHistoryContainer.innerHTML = `
+        ${items || "<div class='rag-loading'>История пуста. Начните с цели диалога.</div>"}
+        <div class="rag-chat-row assistant">
+          <div class="rag-chat-bubble assistant">
+            <span class="rag-chat-meta">sources</span>
+            <div>${sources}</div>
+          </div>
+        </div>
+        <div class="rag-chat-row assistant">
+          <div class="rag-chat-bubble assistant">
+            <span class="rag-chat-meta">quotes</span>
+            <div>${quotes}</div>
+          </div>
+        </div>
+      `;
+      ragChatHistoryContainer.scrollTop = ragChatHistoryContainer.scrollHeight;
+    }
+
+    async function runRagChat() {
+      if (!ragChatQuestionInput || !ragChatHistoryContainer) return;
+      const question = ragChatQuestionInput.value.trim();
+      if (!question) {
+        ragChatHistoryContainer.innerHTML = '<div class="rag-loading">Введите сообщение для чата.</div>';
+        return;
+      }
+      if (ragChatIsSending) return;
+      const sessionId = (ragChatSessionInput?.value || "day25-demo").trim() || "day25-demo";
+      const topKBefore = Math.min(20, Math.max(1, Number(ragTopKBeforeInput?.value || 8)));
+      const topKAfter = Math.min(10, Math.max(1, Number(ragTopKAfterInput?.value || 4)));
+      const threshold = Math.min(1, Math.max(0, Number(ragThresholdInput?.value || 0.52)));
+      ragChatIsSending = true;
+      const sendButtons = Array.from(document.querySelectorAll('[onclick="runRagChat()"]'));
+      sendButtons.forEach((btn) => btn.setAttribute("disabled", "true"));
+      const pending = document.createElement("div");
+      pending.className = "rag-chat-row assistant";
+      pending.id = "rag-chat-pending";
+      pending.innerHTML = `
+        <div class="rag-chat-bubble assistant">
+          <span class="rag-chat-meta">assistant</span>
+          <div>Отправка сообщения…</div>
+        </div>
+      `;
+      ragChatHistoryContainer.appendChild(pending);
+      ragChatHistoryContainer.scrollTop = ragChatHistoryContainer.scrollHeight;
+      try {
+        const response = await fetch("/api/rag_chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            question,
+            top_k_before: topKBefore,
+            top_k_after: topKAfter,
+            threshold
+          }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({ error: "Request failed" }));
+          throw new Error(payload.error || "Ошибка запроса");
+        }
+        const payload = await response.json();
+        renderRagChat(payload);
+        ragChatQuestionInput.value = "";
+      } catch (error) {
+        const pendingEl = document.getElementById("rag-chat-pending");
+        if (pendingEl) pendingEl.remove();
+        const err = document.createElement("div");
+        err.className = "rag-chat-row assistant";
+        err.innerHTML = `
+          <div class="rag-chat-bubble assistant">
+            <span class="rag-chat-meta">assistant</span>
+            <div>Ошибка: ${escapeHtml(error.message)}</div>
+          </div>
+        `;
+        ragChatHistoryContainer.appendChild(err);
+        ragChatHistoryContainer.scrollTop = ragChatHistoryContainer.scrollHeight;
+      } finally {
+        ragChatIsSending = false;
+        sendButtons.forEach((btn) => btn.removeAttribute("disabled"));
+      }
+    }
+
+    async function resetRagChat() {
+      if (!ragChatHistoryContainer) return;
+      const sessionId = (ragChatSessionInput?.value || "day25-demo").trim() || "day25-demo";
+      try {
+        const response = await fetch("/api/rag_chat_reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+        if (!response.ok) {
+          throw new Error("Не удалось сбросить сессию");
+        }
+        const payload = await response.json();
+        renderRagChat({
+          session_id: payload.session_id,
+          history: payload.history || [],
+          task_state: payload.task_state || {},
+          sources: [],
+          quotes: [],
+          weak_context: false
+        });
+      } catch (error) {
+        ragChatHistoryContainer.innerHTML = `<div class="rag-loading">Ошибка: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function runRagChatScenarios() {
+      if (!ragChatScenariosContainer) return;
+      const topKBefore = Math.min(20, Math.max(1, Number(ragTopKBeforeInput?.value || 8)));
+      const topKAfter = Math.min(10, Math.max(1, Number(ragTopKAfterInput?.value || 4)));
+      const threshold = Math.min(1, Math.max(0, Number(ragThresholdInput?.value || 0.52)));
+      ragChatScenariosContainer.innerHTML = '<div class="rag-loading">Запускаю сценарии (10-15 сообщений)…</div>';
+      try {
+        const response = await fetch("/api/rag_chat_scenarios", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            top_k_before: topKBefore,
+            top_k_after: topKAfter,
+            threshold
+          }),
+        });
+        if (!response.ok) {
+          throw new Error("Не удалось выполнить сценарии");
+        }
+        const payload = await response.json();
+        const rows = (payload.reports || [])
+          .map((item) => `<tr>
+            <td>${escapeHtml(item.title || "")}</td>
+            <td>${escapeHtml(item.sources_ok || 0)}/${escapeHtml(item.total_turns || 0)}</td>
+            <td>${escapeHtml(item.goal_ok || 0)}/${escapeHtml(item.total_turns || 0)}</td>
+          </tr>`)
+          .join("");
+        ragChatScenariosContainer.innerHTML = `
+          <div class="rag-panel">
+            <h3>Проверка длинных сценариев</h3>
+            <p>Turns: <strong>${escapeHtml(payload.total_turns || 0)}</strong>,
+               Sources OK: <strong>${escapeHtml(payload.sources_ok || 0)}</strong>,
+               Goal OK: <strong>${escapeHtml(payload.goal_ok || 0)}</strong></p>
+            <table style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr>
+                  <th style="text-align:left; border-bottom:1px solid #2b3f66; padding:6px;">Сценарий</th>
+                  <th style="text-align:left; border-bottom:1px solid #2b3f66; padding:6px;">Источники</th>
+                  <th style="text-align:left; border-bottom:1px solid #2b3f66; padding:6px;">Цель удержана</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        `;
+      } catch (error) {
+        ragChatScenariosContainer.innerHTML = `<div class="rag-loading">Ошибка: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    if (ragChatQuestionInput) {
+      ragChatQuestionInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          runRagChat();
+        }
+      });
+    }
+
+    if (ragChatTaskStateContainer && ragChatHistoryContainer) {
+      renderRagChat({
+        session_id: (ragChatSessionInput?.value || "day25-demo").trim(),
+        task_state: { goal: "", constraints: [], terms: [] },
+        history: [],
+        sources: [],
+        quotes: [],
+        weak_context: false
+      });
     }
 
     function setRagQuestion(value) {

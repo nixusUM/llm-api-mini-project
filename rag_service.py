@@ -19,6 +19,7 @@ from document_indexer import (
 from document_indexer.corpus import collect_corpus_paths, relative_path
 
 CONTROL_QUESTIONS_FILE = Path(__file__).resolve().parent / "rag_control_questions.json"
+CHAT_SCENARIOS_FILE = Path(__file__).resolve().parent / "rag_chat_scenarios.json"
 
 
 @dataclass
@@ -43,10 +44,15 @@ class RAGService:
         self.default_top_k_after = int(os.getenv("RAG_TOP_K_AFTER", "4"))
         self.default_threshold = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.52"))
         self._questions = self._load_control_questions()
+        self._chat_scenarios = self._load_chat_scenarios()
         self._source_map: Dict[str, str] = {}
+        self._chat_sessions: Dict[str, Dict[str, Any]] = {}
 
     def control_questions(self) -> List[Dict[str, Any]]:
         return self._questions
+
+    def chat_scenarios(self) -> List[Dict[str, Any]]:
+        return self._chat_scenarios
 
     def answer_question(
         self,
@@ -182,6 +188,171 @@ class RAGService:
             "reports": reports,
         }
 
+    def reset_chat_session(self, session_id: str) -> Dict[str, Any]:
+        sid = (session_id or "").strip() or "default"
+        self._chat_sessions[sid] = {
+            "id": sid,
+            "history": [],
+            "task_state": self._empty_task_state(),
+        }
+        return self._chat_sessions[sid]
+
+    def chat_turn(
+        self,
+        session_id: str,
+        question: str,
+        top_k_before: Optional[int] = None,
+        top_k_after: Optional[int] = None,
+        threshold: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        if not question.strip():
+            return {"error": "Question is empty."}
+        sid = (session_id or "").strip() or "default"
+        session = self._chat_sessions.get(sid) or self.reset_chat_session(sid)
+        task_state = session["task_state"]
+        self._update_task_state(task_state, question)
+
+        top_before = max(1, top_k_before or self.default_top_k_before)
+        top_after = max(1, top_k_after or self.default_top_k_after)
+        threshold_value = threshold if threshold is not None else self.default_threshold
+        threshold_value = max(0.0, min(threshold_value, 1.0))
+
+        rewritten = self._rewrite_query(question)
+        candidates = self._retrieve_raw(rewritten, top_before, fast_mode=True)
+        reranked = self._rerank(question, candidates)
+        selected = [item for item in reranked if item.final_score >= threshold_value][:top_after]
+        if not selected:
+            selected = reranked[:top_after]
+        weak_context = self._is_weak_context(selected, threshold_value)
+
+        prompt = self._build_chat_prompt(
+            question=question,
+            chunks=selected,
+            history=self._recent_history(session["history"]),
+            task_state=task_state,
+        )
+        llm = self._call_llm(prompt, rag_mode=True)
+        payload = self._build_chat_payload(
+            llm_text=llm["text"],
+            selected=selected,
+            fallback=candidates[:top_after],
+            weak_context=weak_context,
+        )
+
+        session["history"].append({"role": "user", "content": question})
+        session["history"].append({"role": "assistant", "content": payload["answer"]})
+
+        return {
+            "session_id": sid,
+            "answer": payload["answer"],
+            "sources": payload["sources"],
+            "quotes": payload["quotes"],
+            "weak_context": weak_context,
+            "task_state": task_state,
+            "history": self._recent_history(session["history"], limit=12),
+            "model": llm["model"],
+            "tokens": llm["total_tokens"],
+            "chunks_used": [self._chunk_to_dict(item) for item in selected],
+        }
+
+    def evaluate_chat_scenarios(
+        self,
+        top_k_before: Optional[int] = None,
+        top_k_after: Optional[int] = None,
+        threshold: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        reports: List[Dict[str, Any]] = []
+        for index, scenario in enumerate(self._chat_scenarios):
+            sid = f"scenario-{index+1}"
+            self.reset_chat_session(sid)
+            turns = scenario.get("messages", [])
+            turn_reports: List[Dict[str, Any]] = []
+            for turn in turns:
+                result = self._chat_turn_fast(
+                    session_id=sid,
+                    question=str(turn),
+                    top_k_before=top_k_before,
+                    top_k_after=top_k_after,
+                    threshold=threshold,
+                )
+                goal = str(result.get("task_state", {}).get("goal", ""))
+                goal_tokens = self._tokenize(goal)
+                answer_tokens = self._tokenize(str(result.get("answer", "")))
+                goal_match = self._token_overlap(goal_tokens, answer_tokens) >= 0.1 if goal_tokens else True
+                turn_reports.append(
+                    {
+                        "question": turn,
+                        "has_sources": bool(result.get("sources")),
+                        "goal_retained": goal_match,
+                        "weak_context": bool(result.get("weak_context", False)),
+                    }
+                )
+            reports.append(
+                {
+                    "title": scenario.get("title", f"Scenario {index+1}"),
+                    "total_turns": len(turn_reports),
+                    "sources_ok": sum(1 for x in turn_reports if x["has_sources"]),
+                    "goal_ok": sum(1 for x in turn_reports if x["goal_retained"]),
+                    "turns": turn_reports,
+                }
+            )
+        total_turns = sum(item["total_turns"] for item in reports)
+        return {
+            "total_scenarios": len(reports),
+            "total_turns": total_turns,
+            "reports": reports,
+            "sources_ok": sum(item["sources_ok"] for item in reports),
+            "goal_ok": sum(item["goal_ok"] for item in reports),
+        }
+
+    def _chat_turn_fast(
+        self,
+        session_id: str,
+        question: str,
+        top_k_before: Optional[int] = None,
+        top_k_after: Optional[int] = None,
+        threshold: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        sid = (session_id or "").strip() or "default"
+        session = self._chat_sessions.get(sid) or self.reset_chat_session(sid)
+        task_state = session["task_state"]
+        self._update_task_state(task_state, question)
+
+        top_before = max(1, top_k_before or self.default_top_k_before)
+        top_after = max(1, top_k_after or self.default_top_k_after)
+        threshold_value = threshold if threshold is not None else self.default_threshold
+        threshold_value = max(0.0, min(threshold_value, 1.0))
+
+        rewritten = self._rewrite_query(question)
+        candidates = self._retrieve_raw(rewritten, top_before)
+        reranked = self._rerank(question, candidates)
+        selected = [item for item in reranked if item.final_score >= threshold_value][:top_after]
+        if not selected:
+            selected = reranked[:top_after]
+        weak_context = self._is_weak_context(selected, threshold_value)
+
+        if weak_context:
+            answer = "Не знаю. Уточните цель/ограничения, чтобы повысить релевантность."
+        else:
+            head = selected[0].text if selected else ""
+            goal = str(task_state.get("goal", "")).strip()
+            prefix = f"Цель: {goal}. " if goal else ""
+            answer = f"{prefix}Коротко по контексту: {head[:180]}".strip()
+
+        sources = self._collect_sources(selected) or self._collect_sources(candidates[:top_after])
+        quotes = self._collect_quotes(selected) or self._collect_quotes(candidates[:top_after])
+        session["history"].append({"role": "user", "content": question})
+        session["history"].append({"role": "assistant", "content": answer})
+        return {
+            "session_id": sid,
+            "answer": answer,
+            "sources": sources,
+            "quotes": quotes,
+            "weak_context": weak_context,
+            "task_state": task_state,
+            "history": self._recent_history(session["history"], limit=12),
+        }
+
     def _chunk_to_dict(self, chunk: ChunkSnippet) -> Dict[str, Any]:
         text = chunk.text
         if len(text) > 380:
@@ -197,8 +368,10 @@ class RAGService:
             "final_score": round(chunk.final_score, 4),
         }
 
-    def _retrieve_raw(self, query: str, top_k: int) -> List[ChunkSnippet]:
-        self._ensure_indexed()
+    def _retrieve_raw(
+        self, query: str, top_k: int, fast_mode: bool = False
+    ) -> List[ChunkSnippet]:
+        self._ensure_indexed(fast_mode=fast_mode)
         results = self._pipeline.search(query, top_k=top_k)
         snippets: List[ChunkSnippet] = []
         for entry, raw_score in results:
@@ -269,6 +442,36 @@ class RAGService:
             "Ответ:"
         )
 
+    def _build_chat_prompt(
+        self,
+        question: str,
+        chunks: List[ChunkSnippet],
+        history: List[Dict[str, str]],
+        task_state: Dict[str, Any],
+    ) -> str:
+        history_block = "\n".join(
+            f"{item['role']}: {item['content']}" for item in history[-8:]
+        )
+        context = "\n\n".join(
+            f"[{idx + 1}] {chunk.source} / {chunk.section} / {chunk.chunk_id}:\n{chunk.text}"
+            for idx, chunk in enumerate(chunks)
+        )
+        state_block = (
+            f"Цель: {task_state.get('goal', '')}\n"
+            f"Ограничения: {', '.join(task_state.get('constraints', [])) or '—'}\n"
+            f"Термины: {', '.join(task_state.get('terms', [])) or '—'}"
+        )
+        return (
+            "Ты помощник в мини-чате с RAG. Учитывай историю и state задачи.\n"
+            "Дай краткий полезный ответ по контексту.\n"
+            "Не придумывай факты.\n\n"
+            f"Task state:\n{state_block}\n\n"
+            f"Последние сообщения:\n{history_block or '—'}\n\n"
+            f"Вопрос пользователя:\n{question}\n\n"
+            f"Контекст RAG:\n{context or '—'}\n\n"
+            "Ответ:"
+        )
+
     def _build_mode_payload(
         self, llm_text: str, chunks: List[ChunkSnippet], threshold: float
     ) -> Dict[str, Any]:
@@ -293,6 +496,24 @@ class RAGService:
             "has_quotes": bool(quotes),
             "text": self._format_response(answer, sources, quotes),
         }
+
+    def _build_chat_payload(
+        self,
+        llm_text: str,
+        selected: List[ChunkSnippet],
+        fallback: List[ChunkSnippet],
+        weak_context: bool,
+    ) -> Dict[str, Any]:
+        sources = self._collect_sources(selected) or self._collect_sources(fallback)
+        quotes = self._collect_quotes(selected) or self._collect_quotes(fallback)
+        if weak_context:
+            answer = (
+                "Не знаю. Текущий контекст слабый. "
+                "Уточните платформу/цель/ограничения, и я перезапрошу релевантные источники."
+            )
+        else:
+            answer = self._sanitize_rag_text(llm_text)
+        return {"answer": answer, "sources": sources, "quotes": quotes}
 
     def _rewrite_query(self, question: str) -> str:
         q = question.strip()
@@ -420,12 +641,13 @@ class RAGService:
             lines.append("- нет цитат (недостаточная релевантность контекста)")
         return "\n".join(lines)
 
-    def _ensure_indexed(self):
+    def _ensure_indexed(self, fast_mode: bool = False):
         if self._pipeline:
             return
         chunker = FixedSizeChunker(chunk_size=420, overlap=80)
+        api_key = None if fast_mode else os.getenv("OPENAI_API_KEY")
         embedder = Embedder(
-            api_key=os.getenv("OPENAI_API_KEY"),
+            api_key=api_key,
             model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         )
         storage = FAISSStorage(dimension=embedder.dimensions)
@@ -445,6 +667,61 @@ class RAGService:
         }
         pipeline.index_documents(documents)
         self._pipeline = pipeline
+
+    def _recent_history(
+        self, history: List[Dict[str, str]], limit: int = 8
+    ) -> List[Dict[str, str]]:
+        return history[-limit:]
+
+    def _empty_task_state(self) -> Dict[str, Any]:
+        return {"goal": "", "constraints": [], "terms": []}
+
+    def _update_task_state(self, state: Dict[str, Any], question: str):
+        q = question.strip()
+        q_low = q.lower()
+        if not state.get("goal"):
+            state["goal"] = q
+        if "цель" in q_low and ":" in q:
+            goal = q.split(":", 1)[1].strip()
+            if goal:
+                state["goal"] = goal
+        constraints = state.get("constraints", [])
+        if any(x in q_low for x in ["огранич", "только", "нельзя", "не использовать", "должен"]):
+            constraints.append(q)
+        state["constraints"] = constraints[-6:]
+
+        terms = set(state.get("terms", []))
+        for token in self._extract_terms(q):
+            terms.add(token)
+        state["terms"] = sorted(list(terms))[:16]
+
+    def _extract_terms(self, text: str) -> List[str]:
+        tokens = re.findall(r"[a-zA-Zа-яА-Я0-9_+#.-]{3,}", text)
+        allow = {
+            "kotlin",
+            "compose",
+            "multiplatform",
+            "mvi",
+            "mvvm",
+            "coroutines",
+            "flow",
+            "ci",
+            "cd",
+            "release",
+            "staged",
+            "rollout",
+            "android",
+            "ios",
+            "expect",
+            "actual",
+            "kmp",
+        }
+        picked: List[str] = []
+        for token in tokens:
+            t = token.lower()
+            if t in allow:
+                picked.append(t)
+        return picked
 
     def _target_mobile_sources(self) -> set[str]:
         values: set[str] = set()
@@ -469,6 +746,18 @@ class RAGService:
                 return json.load(f)
         except Exception:
             return []
+
+    def _load_chat_scenarios(self) -> List[Dict[str, Any]]:
+        if not CHAT_SCENARIOS_FILE.exists():
+            return []
+        try:
+            with CHAT_SCENARIOS_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            return []
+        return []
 
     def _is_weak_context(self, chunks: List[ChunkSnippet], threshold: float) -> bool:
         if not chunks:
