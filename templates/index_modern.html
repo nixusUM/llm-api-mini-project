@@ -119,6 +119,8 @@
     .layout {
       min-height: 0;
       height: 100%;
+      max-height: 100%;
+      overflow: hidden;
       display: grid;
       grid-template-columns: 340px minmax(0, 1fr) 380px;
       gap: 12px;
@@ -133,6 +135,7 @@
     .left, .right {
       min-height: 0;
       height: 100%;
+      max-height: 100%;
       overflow-y: auto;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
@@ -141,6 +144,66 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
+    }
+    .control-hub {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #111a33;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    .control-hub-title {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+      color: #dce8ff;
+    }
+    .control-hub-sub {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .workspace-switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+    }
+    .workspace-btn {
+      border: 1px solid #2e3f69;
+      background: #0f1730;
+      color: #b9caee;
+      border-radius: 8px;
+      padding: 7px 9px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .workspace-btn.active {
+      color: #eff4ff;
+      border-color: #4f7fd6;
+      background: #1b2d55;
+    }
+    .workspace-help {
+      border: 1px dashed #365e99;
+      border-radius: 9px;
+      background: #102140;
+      color: #c9ddff;
+      font-size: 12px;
+      line-height: 1.4;
+      padding: 9px 10px;
+    }
+    .section.is-hidden {
+      display: none;
+    }
+    .composer-actions-hidden {
+      display: none;
     }
     .section {
       border: 1px solid var(--line);
@@ -500,6 +563,8 @@
 
     .chat {
       min-height: 0;
+      max-height: 100%;
+      overflow: hidden;
       display: grid;
       grid-template-rows: 1fr auto;
       gap: 10px;
@@ -601,6 +666,14 @@
       text-align: right;
     }
     th:first-child, td:first-child { text-align: left; }
+    .local-check-table th,
+    .local-check-table td {
+      text-align: left;
+      vertical-align: top;
+      font-size: 12px;
+    }
+    .local-check-ok { color: #7be2af; font-weight: 700; }
+    .local-check-bad { color: #ff9f9f; font-weight: 700; }
     .compare-card {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -644,7 +717,7 @@
         {% if assignment_mode %}
         <a href="/?full=1" class="btn-secondary-top" style="text-decoration:none;">🧰 Full UI</a>
         {% else %}
-        <a href="/" class="btn-secondary-top" style="text-decoration:none;">🎯 Assignment mode</a>
+        <a href="/?assignment=1" class="btn-secondary-top" style="text-decoration:none;">🎯 Assignment mode</a>
         {% endif %}
         {% if not assignment_mode %}
         <form method="post">
@@ -663,6 +736,20 @@
 
     <form method="post" id="prompt-form" class="layout">
       <aside class="panel left">
+        <div class="control-hub">
+          <p class="control-hub-title">Unified AI Control Hub</p>
+          <p class="control-hub-sub">Выберите текущий тип задачи — интерфейс покажет только нужные настройки и действия.</p>
+          <div class="workspace-switch" id="workspace-switch">
+            <button type="button" class="workspace-btn" data-workspace="chat">💬 Диалог</button>
+            <button type="button" class="workspace-btn" data-workspace="profiles">👤 Профили</button>
+            <button type="button" class="workspace-btn" data-workspace="safety">🛡️ Инварианты</button>
+            <button type="button" class="workspace-btn" data-workspace="automation">⚙️ Автоматизация</button>
+          </div>
+          <div class="workspace-help" id="workspace-help">
+            Режим подсказывает, что настраивать сейчас.
+          </div>
+        </div>
+
         <details class="section" data-section="quick_settings" open>
           <summary>Quick settings</summary>
           <div class="section-content">
@@ -796,6 +883,36 @@
               </div>
             </div>
             <button type="submit" name="action" value="run_orchestration_flow" formnovalidate class="btn-secondary">Run orchestration flow (local + public MCP)</button>
+          </div>
+        </details>
+
+        <details class="section" data-section="local_llm_checks">
+          <summary>Local LLM checks (health + 3 prompts)</summary>
+          <div class="section-content">
+            <div class="field">
+              <label for="local_llm_endpoint">Local endpoint</label>
+              <input id="local_llm_endpoint" name="local_llm_endpoint" value="{{ local_llm_endpoint }}" placeholder="http://127.0.0.1:8088">
+            </div>
+            <div class="field">
+              <label for="local_llm_model">Model name (for API payload)</label>
+              <input id="local_llm_model" name="local_llm_model" value="{{ local_llm_model }}" placeholder="qwen-local">
+            </div>
+            <div class="field">
+              <label for="local_llm_prompt_1">Prompt 1 (simple)</label>
+              <textarea id="local_llm_prompt_1" name="local_llm_prompt_1">{{ local_llm_prompt_1 }}</textarea>
+            </div>
+            <div class="field">
+              <label for="local_llm_prompt_2">Prompt 2 (medium)</label>
+              <textarea id="local_llm_prompt_2" name="local_llm_prompt_2">{{ local_llm_prompt_2 }}</textarea>
+            </div>
+            <div class="field">
+              <label for="local_llm_prompt_3">Prompt 3 (complex)</label>
+              <textarea id="local_llm_prompt_3" name="local_llm_prompt_3">{{ local_llm_prompt_3 }}</textarea>
+            </div>
+            <button type="submit" name="action" value="run_local_llm_checks" formnovalidate class="btn-secondary">Run local LLM checks</button>
+            {% if local_llm_status %}
+            <div class="hint" style="margin-top: 8px;">{{ local_llm_status }}</div>
+            {% endif %}
           </div>
         </details>
 
@@ -1015,11 +1132,11 @@
               <span class="spinner" aria-hidden="true"></span>
               <span class="btn-label">Send</span>
             </button>
-            <button type="submit" name="action" value="compare_memory">Compare memory</button>
-            <button type="submit" name="action" value="compare_strategies">Compare strategies</button>
+            <button type="submit" name="action" value="compare_memory" data-composer-action="compare_memory">Compare memory</button>
+            <button type="submit" name="action" value="compare_strategies" data-composer-action="compare_strategies">Compare strategies</button>
           </div>
           <div class="btn-row" style="margin-top: 8px;">
-            <button type="submit" name="action" value="compare_profiles">Compare profiles</button>
+            <button type="submit" name="action" value="compare_profiles" data-composer-action="compare_profiles">Compare profiles</button>
             <span></span>
           </div>
         </div>
@@ -1032,6 +1149,7 @@
           <button type="button" class="tab-btn" data-tab="compare">Compare</button>
           <button type="button" class="tab-btn" data-tab="pipeline">Pipeline</button>
           <button type="button" class="tab-btn" data-tab="orchestration" title="Orchestration">Orch.</button>
+          <button type="button" class="tab-btn" data-tab="local-llm" title="Local LLM">Local LLM</button>
           <button type="button" class="tab-btn" data-tab="scheduler">Scheduler</button>
           <button type="button" class="tab-btn" data-tab="guide">Guide</button>
         </div>
@@ -1279,6 +1397,71 @@
           </div>
         </div>
 
+        <div class="tab-panel" data-tab-panel="local-llm">
+          <div class="section-content">
+            <div class="stats">
+              Endpoint: <strong>{{ local_llm_endpoint }}</strong><br>
+              Model payload id: <strong>{{ local_llm_model }}</strong>
+            </div>
+          </div>
+          <div class="section-content">
+            <label>Check status</label>
+            {% if local_llm_status %}
+            <div class="hint">{{ local_llm_status }}</div>
+            {% else %}
+            <div class="hint">No local LLM checks yet. Run the left action "Run local LLM checks".</div>
+            {% endif %}
+          </div>
+          {% if local_llm_report and local_llm_report.prompt_results %}
+          <div class="section-content">
+            <label>Prompt checks</label>
+            <div class="table-wrap">
+              <table class="local-check-table" style="min-width: 720px;">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Prompt</th>
+                    <th>OK</th>
+                    <th>Latency</th>
+                    <th>Answer / Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in local_llm_report.prompt_results %}
+                  <tr>
+                    <td>{{ item.id }}</td>
+                    <td>{{ item.prompt }}</td>
+                    <td>
+                      {% if item.ok %}
+                      <span class="local-check-ok">YES</span>
+                      {% else %}
+                      <span class="local-check-bad">NO</span>
+                      {% endif %}
+                    </td>
+                    <td>{{ item.latency_ms }} ms</td>
+                    <td>{{ item.answer if item.ok else item.error }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            <div class="stats" style="margin-top: 8px;">
+              Health: <strong>{{ "ok" if local_llm_report.health.ok else "failed" }}</strong>
+              ({{ local_llm_report.health.latency_ms }} ms)
+              | Prompts: <strong>{{ local_llm_report.summary.ok_prompts }}/{{ local_llm_report.summary.total_prompts }}</strong>
+            </div>
+          </div>
+          {% endif %}
+          <div class="section-content">
+            <label>Raw check report</label>
+            {% if local_llm_result %}
+            <pre style="margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font-size: 12px;">{{ local_llm_result }}</pre>
+            {% else %}
+            <div class="hint">Report will appear here after execution.</div>
+            {% endif %}
+          </div>
+        </div>
+
         <div class="tab-panel" data-tab-panel="guide">
           <div class="hint">
             1) Save 2-4 invariants (stack, architecture, business rule).<br>
@@ -1315,6 +1498,7 @@
       </aside>
     </form>
 
+    {% if assignment_mode %}
     <section class="rag-demo">
       <div class="rag-card">
         <h2>Как тестировать задание (Day 24)</h2>
@@ -1408,6 +1592,7 @@
         </div>
       </div>
     </section>
+    {% endif %}
   </div>
 
   <script>
@@ -1463,6 +1648,75 @@
           .map((item) => item.dataset.section);
         localStorage.setItem(sectionStorageKey, JSON.stringify(openIds));
       });
+    });
+
+    const workspaceButtons = Array.from(document.querySelectorAll(".workspace-btn"));
+    const workspaceHelp = document.getElementById("workspace-help");
+    const composerActionButtons = Array.from(document.querySelectorAll("[data-composer-action]"));
+    const workspaceStorageKey = "assistant-ui-workspace-mode";
+    const sectionById = Object.fromEntries(sections.map((section) => [section.dataset.section, section]));
+    const workspaceConfig = {
+      chat: {
+        label: "Диалог",
+        help: "Фокус на сообщениях и быстрых параметрах модели.",
+        sections: ["quick_settings"],
+        composerActions: ["compare_memory", "compare_strategies", "compare_profiles"],
+        tab: "snapshot",
+      },
+      profiles: {
+        label: "Профили",
+        help: "Настройка стиля, памяти, веток и поведения под конкретного пользователя.",
+        sections: ["quick_settings", "task_profile", "memory_branches"],
+        composerActions: ["compare_profiles", "compare_memory"],
+        tab: "compare",
+      },
+      safety: {
+        label: "Инварианты",
+        help: "Управление ограничениями и состоянием задачи для безопасного выполнения.",
+        sections: ["quick_settings", "invariant_manager", "task_profile"],
+        composerActions: ["compare_memory", "compare_strategies"],
+        tab: "snapshot",
+      },
+      automation: {
+        label: "Автоматизация",
+        help: "MCP-инструменты, пайплайны, оркестрация и планировщик в одном потоке.",
+        sections: ["quick_settings", "mcp_tools", "pipeline", "orchestration", "local_llm_checks", "scheduler"],
+        composerActions: [],
+        tab: "pipeline",
+      },
+    };
+
+    const setWorkspaceMode = (mode) => {
+      const config = workspaceConfig[mode] || workspaceConfig.chat;
+      workspaceButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.workspace === mode);
+      });
+      sections.forEach((section) => {
+        const shouldShow = config.sections.includes(section.dataset.section);
+        section.classList.toggle("is-hidden", !shouldShow);
+      });
+      composerActionButtons.forEach((button) => {
+        const action = button.dataset.composerAction;
+        const visible = config.composerActions.includes(action);
+        button.classList.toggle("composer-actions-hidden", !visible);
+      });
+      if (workspaceHelp) {
+        workspaceHelp.textContent = `${config.label}: ${config.help}`;
+      }
+      if (tabButtons.some((button) => button.dataset.tab === config.tab)) {
+        activateTab(config.tab);
+      }
+      const firstOpenId = config.sections.find((sectionId) => sectionById[sectionId]);
+      if (firstOpenId && sectionById[firstOpenId]) {
+        sectionById[firstOpenId].open = true;
+      }
+      localStorage.setItem(workspaceStorageKey, mode);
+    };
+
+    const initialWorkspaceMode = localStorage.getItem(workspaceStorageKey) || "chat";
+    setWorkspaceMode(initialWorkspaceMode);
+    workspaceButtons.forEach((button) => {
+      button.addEventListener("click", () => setWorkspaceMode(button.dataset.workspace));
     });
 
     const schedulerEls = {

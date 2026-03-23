@@ -1,8 +1,11 @@
 import os
 import json
+import time
 import threading
 from datetime import datetime
 from datetime import timezone
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request
@@ -32,6 +35,8 @@ SCHEDULER_STATE = {
     "last_status": "idle",
     "last_report": "",
 }
+LOCAL_LLM_DEFAULT_ENDPOINT = "http://127.0.0.1:8088"
+LOCAL_LLM_DEFAULT_MODEL = "qwen-local"
 
 
 def _now_utc_text() -> str:
@@ -139,6 +144,118 @@ def parse_window(raw_value: str, fallback: int) -> int:
     return max(2, min(value, 60))
 
 
+def _normalize_local_llm_endpoint(raw_value: str) -> str:
+    endpoint = raw_value.strip() or LOCAL_LLM_DEFAULT_ENDPOINT
+    return endpoint.rstrip("/")
+
+
+def _http_get_json(url: str, timeout_sec: float = 8.0) -> dict:
+    req = urlrequest.Request(url=url, method="GET")
+    with urlrequest.urlopen(req, timeout=timeout_sec) as resp:
+        raw = resp.read().decode("utf-8")
+    return json.loads(raw)
+
+
+def _local_llm_chat_once(
+    endpoint: str,
+    model: str,
+    prompt: str,
+    max_tokens: int = 180,
+    temperature: float = 0.2,
+) -> dict[str, object]:
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urlrequest.Request(
+        url=f"{endpoint}/v1/chat/completions",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    started = time.perf_counter()
+    try:
+        with urlrequest.urlopen(req, timeout=20.0) as resp:
+            raw = resp.read().decode("utf-8")
+        parsed = json.loads(raw)
+        choices = parsed.get("choices", [])
+        if not choices:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return {"ok": False, "error": "No choices in response.", "raw": parsed, "latency_ms": elapsed_ms}
+        message = choices[0].get("message", {})
+        text = str(message.get("content", "")).strip()
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return {"ok": True, "text": text, "raw": parsed, "latency_ms": elapsed_ms}
+    except urlerror.HTTPError as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        try:
+            details = exc.read().decode("utf-8")
+        except Exception:
+            details = str(exc)
+        return {"ok": False, "error": f"HTTP {exc.code}: {details}", "latency_ms": elapsed_ms}
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return {"ok": False, "error": str(exc), "latency_ms": elapsed_ms}
+
+
+def run_local_llm_checks(endpoint: str, model: str, prompts: list[str]) -> dict[str, object]:
+    health_result: dict[str, object]
+    health_started = time.perf_counter()
+    try:
+        health_payload = _http_get_json(f"{endpoint}/health")
+        health_ok = str(health_payload.get("status", "")).lower() == "ok"
+        health_latency_ms = int((time.perf_counter() - health_started) * 1000)
+        health_result = {
+            "ok": health_ok,
+            "payload": health_payload,
+            "latency_ms": health_latency_ms,
+        }
+    except Exception as exc:
+        health_latency_ms = int((time.perf_counter() - health_started) * 1000)
+        health_result = {
+            "ok": False,
+            "error": str(exc),
+            "latency_ms": health_latency_ms,
+        }
+
+    prompt_results: list[dict[str, object]] = []
+    for idx, prompt in enumerate(prompts, start=1):
+        prompt_text = prompt.strip()
+        if not prompt_text:
+            continue
+        chat = _local_llm_chat_once(
+            endpoint=endpoint,
+            model=model,
+            prompt=prompt_text,
+        )
+        prompt_results.append(
+            {
+                "id": idx,
+                "prompt": prompt_text,
+                "ok": bool(chat.get("ok", False)),
+                "answer": str(chat.get("text", "")).strip(),
+                "error": str(chat.get("error", "")).strip(),
+                "latency_ms": int(chat.get("latency_ms", 0) or 0),
+            }
+        )
+
+    all_prompts_ok = all(item["ok"] for item in prompt_results) if prompt_results else False
+    return {
+        "endpoint": endpoint,
+        "model": model,
+        "health": health_result,
+        "prompt_results": prompt_results,
+        "summary": {
+            "total_prompts": len(prompt_results),
+            "ok_prompts": sum(1 for item in prompt_results if item["ok"]),
+            "all_ok": bool(health_result.get("ok", False)) and all_prompts_ok,
+        },
+    }
+
+
 def as_result_view(response) -> dict:
     return {
         "text": response.text,
@@ -213,7 +330,11 @@ def build_token_growth(history: list[dict]) -> list[dict]:
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-    assignment_mode = request.args.get("full", "0") != "1"
+    full_param = request.args.get("full")
+    if full_param is not None:
+        assignment_mode = full_param != "1"
+    else:
+        assignment_mode = request.args.get("assignment", "0") == "1"
     prompt = ""
     model_options = get_available_models()
     env_model = get_model_override()
@@ -281,6 +402,17 @@ def index():
     orchestration_limit = "5"
     orchestration_file_name = "orchestration_summary.txt"
     orchestration_result = ""
+    local_llm_endpoint = LOCAL_LLM_DEFAULT_ENDPOINT
+    local_llm_model = LOCAL_LLM_DEFAULT_MODEL
+    local_llm_prompt_1 = "Ответь кратко: 2+2=?"
+    local_llm_prompt_2 = "Объясни в 3 пунктах, что такое REST API простыми словами."
+    local_llm_prompt_3 = (
+        "Сделай мини-план запуска pet-проекта трекер привычек на 4 недели: "
+        "цели, риски, метрики, стек."
+    )
+    local_llm_status = ""
+    local_llm_result = ""
+    local_llm_report: dict[str, object] = {}
     tool_to_server_map: dict[str, str] = {}
     try:
         tool_to_server_map = get_tool_to_server_map()
@@ -356,6 +488,13 @@ def index():
         orchestration_query = request.form.get("orchestration_query", orchestration_query).strip()
         orchestration_limit = request.form.get("orchestration_limit", orchestration_limit).strip()
         orchestration_file_name = request.form.get("orchestration_file_name", orchestration_file_name).strip()
+        local_llm_endpoint = _normalize_local_llm_endpoint(
+            request.form.get("local_llm_endpoint", local_llm_endpoint)
+        )
+        local_llm_model = request.form.get("local_llm_model", local_llm_model).strip() or LOCAL_LLM_DEFAULT_MODEL
+        local_llm_prompt_1 = request.form.get("local_llm_prompt_1", local_llm_prompt_1).strip()
+        local_llm_prompt_2 = request.form.get("local_llm_prompt_2", local_llm_prompt_2).strip()
+        local_llm_prompt_3 = request.form.get("local_llm_prompt_3", local_llm_prompt_3).strip()
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -758,6 +897,23 @@ def index():
                     indent=2,
                 )
                 status = f"Orchestration flow failed: {exc}"
+        elif action == "run_local_llm_checks":
+            prompts = [local_llm_prompt_1, local_llm_prompt_2, local_llm_prompt_3]
+            report = run_local_llm_checks(
+                endpoint=local_llm_endpoint,
+                model=local_llm_model,
+                prompts=prompts,
+            )
+            local_llm_report = report
+            local_llm_result = json.dumps(report, ensure_ascii=False, indent=2)
+            health_ok = bool(report.get("health", {}).get("ok", False))
+            ok_prompts = int(report.get("summary", {}).get("ok_prompts", 0) or 0)
+            total_prompts = int(report.get("summary", {}).get("total_prompts", 0) or 0)
+            if health_ok and ok_prompts == total_prompts and total_prompts > 0:
+                local_llm_status = f"Local LLM check: OK ({ok_prompts}/{total_prompts} prompts)."
+            else:
+                local_llm_status = f"Local LLM check: issues found ({ok_prompts}/{total_prompts} prompts)."
+            status = local_llm_status
         elif action == "send":
             if prompt:
                 response = agent.run_chat_persistent(
@@ -864,6 +1020,14 @@ def index():
         orchestration_limit=orchestration_limit,
         orchestration_file_name=orchestration_file_name,
         orchestration_result=orchestration_result,
+        local_llm_endpoint=local_llm_endpoint,
+        local_llm_model=local_llm_model,
+        local_llm_prompt_1=local_llm_prompt_1,
+        local_llm_prompt_2=local_llm_prompt_2,
+        local_llm_prompt_3=local_llm_prompt_3,
+        local_llm_status=local_llm_status,
+        local_llm_result=local_llm_result,
+        local_llm_report=local_llm_report,
         tool_to_server_map=tool_to_server_map,
         registered_servers=list(SERVERS.keys()),
         active_branch=active_branch,
