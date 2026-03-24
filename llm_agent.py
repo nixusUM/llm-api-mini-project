@@ -384,6 +384,37 @@ class LLMAgent:
     def clear_all(self) -> None:
         self._save_state(self._default_state())
 
+    def append_external_turn(
+        self,
+        user_message: str,
+        assistant_message: str,
+        branch_id: str | None = None,
+        strategy: str = "external",
+        model_id: str = "local",
+        latency_ms: int = 0,
+    ) -> None:
+        state = self._load_state()
+        active = branch_id or state["active_branch"]
+        branch = self._get_branch(state, active)
+        user_text = user_message.strip()
+        assistant_text = assistant_message.strip()
+        if not user_text or not assistant_text:
+            return
+        branch["messages"].append({"role": "user", "content": user_text})
+        branch["messages"].append(
+            {
+                "role": "assistant",
+                "content": assistant_text,
+                "meta": {
+                    "strategy": strategy,
+                    "used_model": model_id,
+                    "latency_ms": int(latency_ms),
+                },
+            }
+        )
+        branch["messages"] = branch["messages"][-220:]
+        self._save_state(state)
+
     def run_chat_preview(
         self,
         user_message: str,

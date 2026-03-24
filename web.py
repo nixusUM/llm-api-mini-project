@@ -256,6 +256,43 @@ def run_local_llm_checks(endpoint: str, model: str, prompts: list[str]) -> dict[
     }
 
 
+def build_local_result(
+    model: str,
+    strategy: str,
+    branch: str,
+    profile_id: str,
+    include_memory_layers: bool,
+    latency_ms: int,
+    text: str,
+) -> dict[str, object]:
+    return {
+        "text": text,
+        "used_model": f"local:{model}",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "latency_ms": int(latency_ms),
+        "cost_text": "local",
+        "strategy": strategy,
+        "branch": branch,
+        "current_request_tokens": 0,
+        "history_tokens_full": 0,
+        "history_tokens_effective": 0,
+        "facts_tokens": 0,
+        "working_tokens": 0,
+        "long_term_tokens": 0,
+        "profile_tokens": 0,
+        "context_tokens_estimate": 0,
+        "context_limit_tokens": 0,
+        "include_memory_layers": include_memory_layers,
+        "profile_id": profile_id,
+        "overflowed": False,
+        "invariant_tokens": 0,
+        "blocked_by_invariants": False,
+        "invariant_report": "",
+    }
+
+
 def as_result_view(response) -> dict:
     return {
         "text": response.text,
@@ -336,7 +373,10 @@ def index():
     else:
         assignment_mode = request.args.get("assignment", "0") == "1"
     prompt = ""
-    model_options = get_available_models()
+    try:
+        model_options = get_available_models()
+    except Exception:
+        model_options = []
     env_model = get_model_override()
     if env_model:
         default_model = env_model
@@ -346,6 +386,7 @@ def index():
         default_model = model_options[0] if model_options else ""
 
     selected_model = default_model
+    llm_backend = "local"
     strategy = "sliding"
     temperature = "0.7"
     max_tokens = "600"
@@ -444,6 +485,9 @@ def index():
         action = request.form.get("action", "send").strip().lower()
         prompt = request.form.get("prompt", "").strip()
         selected_model = request.form.get("selected_model", default_model).strip()
+        llm_backend = request.form.get("llm_backend", llm_backend).strip().lower()
+        if llm_backend not in {"local", "cloud"}:
+            llm_backend = "local"
         if model_options and selected_model not in model_options:
             selected_model = default_model
         strategy = request.form.get("strategy", "sliding").strip().lower()
@@ -916,19 +960,50 @@ def index():
             status = local_llm_status
         elif action == "send":
             if prompt:
-                response = agent.run_chat_persistent(
-                    user_message=prompt,
-                    model_id=selected_model,
-                    temperature=parsed_temp,
-                    max_tokens=parsed_max_tokens,
-                    strategy=strategy,
-                    window_n=parsed_window,
-                    branch_id=selected_branch,
-                    profile_id=selected_profile,
-                    context_limit_override=parsed_context_limit,
-                    include_memory_layers=include_memory_layers,
-                )
-                result = as_result_view(response)
+                if llm_backend == "local":
+                    chat = _local_llm_chat_once(
+                        endpoint=local_llm_endpoint,
+                        model=local_llm_model,
+                        prompt=prompt,
+                        max_tokens=parsed_max_tokens,
+                        temperature=parsed_temp,
+                    )
+                    if chat.get("ok"):
+                        answer_text = str(chat.get("text", "")).strip()
+                        result = build_local_result(
+                            model=local_llm_model,
+                            strategy=strategy,
+                            branch=selected_branch,
+                            profile_id=selected_profile,
+                            include_memory_layers=include_memory_layers,
+                            latency_ms=int(chat.get("latency_ms", 0) or 0),
+                            text=answer_text,
+                        )
+                        agent.append_external_turn(
+                            user_message=prompt,
+                            assistant_message=answer_text,
+                            branch_id=selected_branch,
+                            strategy=f"local_{strategy}",
+                            model_id=local_llm_model,
+                            latency_ms=int(chat.get("latency_ms", 0) or 0),
+                        )
+                        status = f"Local LLM response received ({result['latency_ms']} ms)."
+                    else:
+                        status = f"Local LLM error: {chat.get('error', 'unknown error')}"
+                else:
+                    response = agent.run_chat_persistent(
+                        user_message=prompt,
+                        model_id=selected_model,
+                        temperature=parsed_temp,
+                        max_tokens=parsed_max_tokens,
+                        strategy=strategy,
+                        window_n=parsed_window,
+                        branch_id=selected_branch,
+                        profile_id=selected_profile,
+                        context_limit_override=parsed_context_limit,
+                        include_memory_layers=include_memory_layers,
+                    )
+                    result = as_result_view(response)
                 prompt = ""
             else:
                 status = "Prompt is empty."
@@ -962,6 +1037,7 @@ def index():
         prompt=prompt,
         model_options=model_options,
         selected_model=selected_model,
+        llm_backend=llm_backend,
         strategy=strategy,
         strategies=STRATEGIES,
         temperature=temperature,

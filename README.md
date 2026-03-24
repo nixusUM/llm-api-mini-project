@@ -3,6 +3,7 @@
 Мини-проект для демонстрации первого запроса к LLM через API:
 - CLI режим (`python3 cli.py`)
 - Web режим (`python3 web.py`)
+- Telegram-бот на локальной LLM (`python3 telegram_local_bot.py`)
 - MCP demo (`python3 mcp_list_tools.py`)
 
 ## 1) Setup
@@ -20,9 +21,90 @@ cp .env.example .env
 ```env
 ANTHROPIC_API_KEY=your_new_api_key_here
 ANTHROPIC_MODEL=
+LOCAL_LLM_ENDPOINT=http://127.0.0.1:8088
+LOCAL_LLM_MODEL=qwen-local
+TELEGRAM_BOT_TOKEN=
 ```
 
 `ANTHROPIC_MODEL` optional: если оставить пустым, проект сам подберет доступную модель.
+`TELEGRAM_BOT_TOKEN` нужен только для Telegram-бота.
+
+## Telegram бот с локальной LLM (без облака)
+
+Этот режим не использует Anthropic/OpenAI. Бот отправляет сообщения только в локальный endpoint:
+- `POST {LOCAL_LLM_ENDPOINT}/v1/chat/completions`
+
+### Шаги
+
+1. Поднимите локальную LLM, совместимую с OpenAI Chat Completions API.
+2. Укажите в `.env`:
+   - `LOCAL_LLM_ENDPOINT` (например `http://127.0.0.1:8088`)
+   - `LOCAL_LLM_MODEL` (например `qwen-local`)
+   - `TELEGRAM_BOT_TOKEN` (токен от `@BotFather`)
+3. Запустите:
+
+```bash
+python3 telegram_local_bot.py
+```
+
+Команды в Telegram:
+- `/start` — справка
+- `/health` — пробный запрос к локальной модели
+
+### Пошаговая проверка (end-to-end)
+
+1. Установите зависимости и активируйте окружение:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2. Проверьте, что `.env` заполнен:
+
+```env
+LOCAL_LLM_ENDPOINT=http://127.0.0.1:8088
+LOCAL_LLM_MODEL=qwen-local
+TELEGRAM_BOT_TOKEN=ваш_токен_от_BotFather
+```
+
+3. Быстрый smoke-test локальной LLM:
+
+```bash
+python3 check_local_llm.py
+```
+
+Ожидаемо:
+- в `[health]` есть статус `ok`,
+- в `[chat]` приходит короткий ответ модели.
+
+4. Запустите веб-приложение:
+
+```bash
+python3 web.py
+```
+
+Проверьте в UI:
+- в `Quick settings` выбрано `LLM backend = Local (no cloud)`,
+- в `Local LLM checks` нажмите `Run local LLM checks`,
+- отправьте сообщение через `Send` и убедитесь, что пришел ответ от локальной модели.
+
+5. Запустите Telegram-бота:
+
+```bash
+python3 telegram_local_bot.py
+```
+
+6. Проверка в Telegram:
+- откройте бота, отправьте `/start`,
+- отправьте `/health`,
+- отправьте обычный вопрос (например: `Объясни REST API в 3 пунктах`),
+- бот должен ответить текстом из локальной LLM.
+
+7. Критерий "без облака":
+- не нужен `ANTHROPIC_API_KEY`,
+- бот и local-режим в web работают только через `LOCAL_LLM_ENDPOINT`.
 
 ## 2) Run CLI
 

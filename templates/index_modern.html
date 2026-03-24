@@ -205,6 +205,9 @@
     .composer-actions-hidden {
       display: none;
     }
+    .backend-cloud-only-hidden {
+      display: none;
+    }
     .section {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -753,6 +756,13 @@
         <details class="section" data-section="quick_settings" open>
           <summary>Quick settings</summary>
           <div class="section-content">
+            <div class="field">
+              <label for="llm_backend">LLM backend (chat)</label>
+              <select id="llm_backend" name="llm_backend">
+                <option value="local" {% if llm_backend == "local" %}selected{% endif %}>Local (no cloud)</option>
+                <option value="cloud" {% if llm_backend == "cloud" %}selected{% endif %}>Cloud (Anthropic)</option>
+              </select>
+            </div>
             <div class="row-2">
               <div class="field">
                 <label for="strategy">Strategy</label>
@@ -768,7 +778,7 @@
               </div>
             </div>
             <div class="field">
-              <label for="selected_model">Model</label>
+              <label for="selected_model">Cloud model</label>
               <select id="selected_model" name="selected_model">
                 {% for model in model_options %}
                 <option value="{{ model }}" {% if model == selected_model %}selected{% endif %}>{{ model }}</option>
@@ -1132,11 +1142,11 @@
               <span class="spinner" aria-hidden="true"></span>
               <span class="btn-label">Send</span>
             </button>
-            <button type="submit" name="action" value="compare_memory" data-composer-action="compare_memory">Compare memory</button>
-            <button type="submit" name="action" value="compare_strategies" data-composer-action="compare_strategies">Compare strategies</button>
+            <button type="submit" name="action" value="compare_memory" data-composer-action="compare_memory" data-cloud-only-action="1">Compare memory</button>
+            <button type="submit" name="action" value="compare_strategies" data-composer-action="compare_strategies" data-cloud-only-action="1">Compare strategies</button>
           </div>
           <div class="btn-row" style="margin-top: 8px;">
-            <button type="submit" name="action" value="compare_profiles" data-composer-action="compare_profiles">Compare profiles</button>
+            <button type="submit" name="action" value="compare_profiles" data-composer-action="compare_profiles" data-cloud-only-action="1">Compare profiles</button>
             <span></span>
           </div>
         </div>
@@ -1653,6 +1663,9 @@
     const workspaceButtons = Array.from(document.querySelectorAll(".workspace-btn"));
     const workspaceHelp = document.getElementById("workspace-help");
     const composerActionButtons = Array.from(document.querySelectorAll("[data-composer-action]"));
+    const cloudOnlyActionButtons = Array.from(document.querySelectorAll("[data-cloud-only-action]"));
+    const llmBackendSelect = document.getElementById("llm_backend");
+    const cloudModelSelect = document.getElementById("selected_model");
     const workspaceStorageKey = "assistant-ui-workspace-mode";
     const sectionById = Object.fromEntries(sections.map((section) => [section.dataset.section, section]));
     const workspaceConfig = {
@@ -1718,6 +1731,22 @@
     workspaceButtons.forEach((button) => {
       button.addEventListener("click", () => setWorkspaceMode(button.dataset.workspace));
     });
+
+    const syncBackendUI = () => {
+      if (!llmBackendSelect) return;
+      const isLocal = llmBackendSelect.value === "local";
+      cloudOnlyActionButtons.forEach((button) => {
+        button.classList.toggle("backend-cloud-only-hidden", isLocal);
+        button.disabled = isLocal;
+      });
+      if (cloudModelSelect) {
+        cloudModelSelect.disabled = isLocal;
+      }
+    };
+    syncBackendUI();
+    if (llmBackendSelect) {
+      llmBackendSelect.addEventListener("change", syncBackendUI);
+    }
 
     const schedulerEls = {
       running: document.getElementById("scheduler-running"),
