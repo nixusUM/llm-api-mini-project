@@ -3,9 +3,12 @@
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
 from anthropic_client import ask_claude_with_meta
 
@@ -15,6 +18,7 @@ from document_indexer import (
     FAISSStorage,
     FixedSizeChunker,
     IndexerPipeline,
+    JSONStorage,
 )
 from document_indexer.corpus import collect_corpus_paths, relative_path
 
@@ -38,11 +42,17 @@ class RAGService:
     def __init__(self):
         self._pipeline: Optional[IndexerPipeline] = None
         self.model_id = os.getenv("ANTHROPIC_MODEL", "claude-3-5-haiku-latest")
+        self.generation_backend = os.getenv("RAG_GENERATION_BACKEND", "local").strip().lower()
+        self.local_llm_endpoint = (
+            os.getenv("LOCAL_LLM_ENDPOINT", "http://127.0.0.1:8088").strip().rstrip("/")
+        )
+        self.local_llm_model = os.getenv("LOCAL_LLM_MODEL", "qwen-local").strip()
         self.temperature = float(os.getenv("RAG_TEMPERATURE", "0.35"))
         self.max_tokens = int(os.getenv("RAG_MAX_TOKENS", "500"))
         self.default_top_k_before = int(os.getenv("RAG_TOP_K_BEFORE", "8"))
         self.default_top_k_after = int(os.getenv("RAG_TOP_K_AFTER", "4"))
         self.default_threshold = float(os.getenv("RAG_SIMILARITY_THRESHOLD", "0.52"))
+        self.week6_index_path = self._resolve_week6_index_path()
         self._questions = self._load_control_questions()
         self._chat_scenarios = self._load_chat_scenarios()
         self._source_map: Dict[str, str] = {}
@@ -186,6 +196,139 @@ class RAGService:
             "quotes_ok": sum(1 for x in reports if x["quotes_present"]),
             "semantic_ok": sum(1 for x in reports if x["semantic_match"]),
             "reports": reports,
+        }
+
+    def compare_generation_backends(
+        self,
+        repeats: int = 2,
+        question_limit: Optional[int] = None,
+        top_k_before: Optional[int] = None,
+        top_k_after: Optional[int] = None,
+        threshold: Optional[float] = None,
+        enable_query_rewrite: bool = True,
+    ) -> Dict[str, Any]:
+        questions = [q for q in self._questions if str(q.get("question", "")).strip()]
+        if question_limit is not None:
+            questions = questions[: max(1, int(question_limit))]
+        reports: List[Dict[str, Any]] = []
+        for item in questions:
+            report = self._compare_one_question(
+                question=str(item.get("question", "")).strip(),
+                expectation=str(item.get("expectation", "")).strip(),
+                repeats=max(1, int(repeats)),
+                top_k_before=top_k_before,
+                top_k_after=top_k_after,
+                threshold=threshold,
+                enable_query_rewrite=enable_query_rewrite,
+            )
+            reports.append(report)
+        local_ok = sum(1 for x in reports if x.get("local", {}).get("semantic_match"))
+        cloud_ok = sum(1 for x in reports if x.get("cloud", {}).get("semantic_match"))
+        return {
+            "total_questions": len(reports),
+            "repeats_per_question": max(1, int(repeats)),
+            "local_quality_ok": local_ok,
+            "cloud_quality_ok": cloud_ok,
+            "reports": reports,
+        }
+
+    def _compare_one_question(
+        self,
+        question: str,
+        expectation: str,
+        repeats: int,
+        top_k_before: Optional[int],
+        top_k_after: Optional[int],
+        threshold: Optional[float],
+        enable_query_rewrite: bool,
+    ) -> Dict[str, Any]:
+        retrieval = self._prepare_improved_retrieval(
+            question=question,
+            top_k_before=top_k_before,
+            top_k_after=top_k_after,
+            threshold=threshold,
+            enable_query_rewrite=enable_query_rewrite,
+        )
+        local_stats = self._run_backend_repeated("local", retrieval["prompt"], repeats)
+        cloud_stats = self._run_backend_repeated("cloud", retrieval["prompt"], repeats)
+        local_answer = str(local_stats.get("sample_answer", ""))
+        cloud_answer = str(cloud_stats.get("sample_answer", ""))
+        quotes = retrieval.get("quotes", [])
+        return {
+            "question": question,
+            "expectation": expectation,
+            "retrieval": {
+                "sources": retrieval.get("sources", []),
+                "quotes": quotes,
+                "weak_context": retrieval.get("weak_context", True),
+                "chunks_used": [self._chunk_to_dict(c) for c in retrieval.get("chunks", [])],
+            },
+            "local": {
+                **local_stats,
+                "semantic_match": self._semantic_match(expectation, local_answer, quotes),
+            },
+            "cloud": {
+                **cloud_stats,
+                "semantic_match": self._semantic_match(expectation, cloud_answer, quotes),
+            },
+        }
+
+    def _prepare_improved_retrieval(
+        self,
+        question: str,
+        top_k_before: Optional[int],
+        top_k_after: Optional[int],
+        threshold: Optional[float],
+        enable_query_rewrite: bool,
+    ) -> Dict[str, Any]:
+        top_before = max(1, top_k_before or self.default_top_k_before)
+        top_after = max(1, top_k_after or self.default_top_k_after)
+        threshold_value = threshold if threshold is not None else self.default_threshold
+        threshold_value = max(0.0, min(threshold_value, 1.0))
+        rewritten = self._rewrite_query(question) if enable_query_rewrite else question
+        candidates = self._retrieve_raw(rewritten, top_before)
+        reranked = self._rerank(question, candidates)
+        selected = [item for item in reranked if item.final_score >= threshold_value][:top_after]
+        if not selected:
+            selected = reranked[:top_after]
+        return {
+            "prompt": self._build_context_prompt(question, selected),
+            "chunks": selected,
+            "sources": self._collect_sources(selected),
+            "quotes": self._collect_quotes(selected),
+            "weak_context": self._is_weak_context(selected, threshold_value),
+        }
+
+    def _run_backend_repeated(self, backend: str, prompt: str, repeats: int) -> Dict[str, Any]:
+        latencies: List[int] = []
+        errors: List[str] = []
+        sample_answer = ""
+        model = ""
+        for _ in range(repeats):
+            try:
+                start = time.perf_counter()
+                result = (
+                    self._call_local_llm(prompt, rag_mode=True)
+                    if backend == "local"
+                    else self._call_cloud_llm(prompt, rag_mode=True)
+                )
+                elapsed_ms = int((time.perf_counter() - start) * 1000)
+                model = str(result.get("model", model))
+                sample_answer = sample_answer or str(result.get("text", "")).strip()
+                latencies.append(int(result.get("latency_ms", elapsed_ms)))
+            except Exception as exc:
+                errors.append(str(exc))
+        success = repeats - len(errors)
+        avg_latency = int(sum(latencies) / len(latencies)) if latencies else None
+        return {
+            "backend": backend,
+            "model": model,
+            "success_runs": success,
+            "error_runs": len(errors),
+            "success_rate": round(success / max(repeats, 1), 3),
+            "avg_latency_ms": avg_latency,
+            "errors": errors[:3],
+            "sample_answer": self._sanitize_rag_text(sample_answer),
         }
 
     def reset_chat_session(self, session_id: str) -> Dict[str, Any]:
@@ -536,6 +679,12 @@ class RAGService:
         return f"{q}. Контекст: {'; '.join(additions)}"
 
     def _call_llm(self, user_message: str, rag_mode: bool = False) -> Dict[str, Any]:
+        backend = self.generation_backend if self.generation_backend in {"local", "cloud"} else "local"
+        if backend == "local":
+            return self._call_local_llm(user_message, rag_mode=rag_mode)
+        return self._call_cloud_llm(user_message, rag_mode=rag_mode)
+
+    def _call_cloud_llm(self, user_message: str, rag_mode: bool = False) -> Dict[str, Any]:
         system_instruction = None
         if rag_mode:
             system_instruction = (
@@ -558,6 +707,63 @@ class RAGService:
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
         }
+
+    def _call_local_llm(self, user_message: str, rag_mode: bool = False) -> Dict[str, Any]:
+        payload = {
+            "model": self.local_llm_model,
+            "messages": [{"role": "user", "content": user_message}],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        if rag_mode:
+            payload["messages"].insert(
+                0,
+                {
+                    "role": "system",
+                    "content": (
+                        "Ты RAG-ассистент. Если в фрагментах есть релевантные факты, "
+                        "используй их и не отвечай расплывчато."
+                    ),
+                },
+            )
+        start = time.perf_counter()
+        response = self._post_local_chat(payload)
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        choices = response.get("choices", []) if isinstance(response, dict) else []
+        message = choices[0].get("message", {}) if choices else {}
+        text = str(message.get("content", "")).strip()
+        usage = response.get("usage", {}) if isinstance(response, dict) else {}
+        prompt_tokens = int(usage.get("prompt_tokens", 0))
+        completion_tokens = int(usage.get("completion_tokens", 0))
+        return {
+            "text": text or "Не знаю. Локальная модель вернула пустой ответ.",
+            "model": self.local_llm_model,
+            "input_tokens": prompt_tokens,
+            "output_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "latency_ms": elapsed_ms,
+        }
+
+    def _post_local_chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        endpoints = [
+            f"{self.local_llm_endpoint}/v1/chat/completions",
+            f"{self.local_llm_endpoint}/chat/completions",
+        ]
+        last_error = ""
+        for url in endpoints:
+            try:
+                req = urlrequest.Request(url=url, data=body, method="POST", headers=headers)
+                with urlrequest.urlopen(req, timeout=90.0) as resp:
+                    raw = resp.read().decode("utf-8")
+                data = json.loads(raw)
+                return data if isinstance(data, dict) else {}
+            except urlerror.HTTPError as exc:
+                last_error = f"HTTP {exc.code}"
+            except Exception as exc:
+                last_error = str(exc)
+        raise RuntimeError(f"Local LLM request failed: {last_error}")
 
     def _sanitize_rag_text(self, text: str) -> str:
         value = (text or "").strip()
@@ -644,12 +850,11 @@ class RAGService:
     def _ensure_indexed(self, fast_mode: bool = False):
         if self._pipeline:
             return
+        if self.week6_index_path and self.week6_index_path.exists():
+            self._load_week6_index(self.week6_index_path)
+            return
         chunker = FixedSizeChunker(chunk_size=420, overlap=80)
-        api_key = None if fast_mode else os.getenv("OPENAI_API_KEY")
-        embedder = Embedder(
-            api_key=api_key,
-            model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
-        )
+        embedder = Embedder(api_key="LOCAL_ONLY", force_mock=True)
         storage = FAISSStorage(dimension=embedder.dimensions)
         pipeline = IndexerPipeline(chunker=chunker, embedder=embedder, storage=storage)
         loader = DocumentLoader()
@@ -667,6 +872,24 @@ class RAGService:
         }
         pipeline.index_documents(documents)
         self._pipeline = pipeline
+
+    def _load_week6_index(self, index_path: Path):
+        chunker = FixedSizeChunker(chunk_size=420, overlap=80)
+        embedder = Embedder(api_key="LOCAL_ONLY", force_mock=True)
+        storage = JSONStorage(dimension=embedder.dimensions)
+        pipeline = IndexerPipeline(chunker=chunker, embedder=embedder, storage=storage)
+        pipeline.load(str(index_path))
+        self._pipeline = pipeline
+        self._source_map = {}
+
+    def _resolve_week6_index_path(self) -> Optional[Path]:
+        env_path = os.getenv("RAG_INDEX_PATH", "").strip()
+        if env_path:
+            candidate = Path(env_path)
+            return candidate if candidate.exists() else None
+        base_dir = Path(__file__).resolve().parent / "document_indices"
+        candidate = base_dir / "index_fixed_size_json_20260316_195228.json"
+        return candidate if candidate.exists() else None
 
     def _recent_history(
         self, history: List[Dict[str, str]], limit: int = 8

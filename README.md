@@ -306,6 +306,41 @@ python3 document_indexer_app.py
 - источники,
 - итоговый ответ модели.
 
+### Day 26: локальная LLM + локальный RAG (Week 6 index)
+
+Теперь RAG можно прогонять полностью локально:
+- retrieval работает по сохраненному индексу Week 6: `document_indices/index_fixed_size_json_20260316_195228.json`
+- генерация ответа идет через локальную модель (`llama-server`, модель `qwen-local`)
+- cloud-режим оставлен для сравнения качества и стабильности
+
+Переключение backend генерации:
+
+```bash
+export RAG_GENERATION_BACKEND=local   # local | cloud
+```
+
+По умолчанию используется `local`.
+
+Сервис также использует:
+- `LOCAL_LLM_ENDPOINT` (например `http://127.0.0.1:8088`)
+- `LOCAL_LLM_MODEL` (например `qwen-local`)
+
+#### Сравнение local vs cloud (качество / скорость / стабильность)
+
+Запустите:
+
+```bash
+python3 rag_local_eval.py --repeats 2
+```
+
+Скрипт сохранит отчет:
+- `data/pipeline_outputs/rag_local_vs_cloud_report.json`
+
+В отчете:
+- `semantic_match` — прокси-оценка качества по control questions
+- `avg_latency_ms` — скорость
+- `success_rate` и `error_runs` — стабильность
+
 ### Структура модуля
 
 ```

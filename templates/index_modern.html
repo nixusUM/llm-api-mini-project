@@ -1546,8 +1546,22 @@
         </div>
         <button type="button" class="btn-primary" onclick="runRagQuery()" style="margin-top: 10px;">Сравнить режимы</button>
         <button type="button" class="btn-secondary" onclick="runRagAudit()" style="margin-top: 10px;">Проверить 10 вопросов</button>
+        <div class="rag-panel-grid" style="margin-top: 10px;">
+          <div class="field">
+            <label for="rag-compare-repeats">Повторы на вопрос (1-5)</label>
+            <input id="rag-compare-repeats" type="number" min="1" max="5" value="1">
+          </div>
+          <div class="field">
+            <label for="rag-compare-limit">Сколько вопросов запускать (1-10)</label>
+            <input id="rag-compare-limit" type="number" min="1" max="10" value="4">
+          </div>
+          <div class="field" style="display: flex; align-items: end;">
+            <button type="button" class="btn-secondary" onclick="runRagCompare()" style="width: 100%;">Сравнить local vs cloud</button>
+          </div>
+        </div>
         <div id="rag-results" class="rag-results"></div>
         <div id="rag-audit-results" class="rag-results"></div>
+        <div id="rag-compare-results" class="rag-results"></div>
       </div>
 
       <div class="rag-card">
@@ -1792,6 +1806,9 @@
     const ragRewriteInput = document.getElementById("rag-rewrite");
     const ragResultsContainer = document.getElementById("rag-results");
     const ragAuditResultsContainer = document.getElementById("rag-audit-results");
+    const ragCompareResultsContainer = document.getElementById("rag-compare-results");
+    const ragCompareRepeatsInput = document.getElementById("rag-compare-repeats");
+    const ragCompareLimitInput = document.getElementById("rag-compare-limit");
     const ragChatSessionInput = document.getElementById("rag-chat-session");
     const ragChatQuestionInput = document.getElementById("rag-chat-question");
     const ragChatTaskStateContainer = document.getElementById("rag-chat-task-state");
@@ -1868,6 +1885,39 @@
         renderRagAudit(payload);
       } catch (error) {
         ragAuditResultsContainer.innerHTML = `<div class="rag-loading">Ошибка: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    async function runRagCompare() {
+      if (!ragCompareResultsContainer) return;
+      const repeats = Math.min(5, Math.max(1, Number(ragCompareRepeatsInput?.value || 1)));
+      const questionLimit = Math.min(10, Math.max(1, Number(ragCompareLimitInput?.value || 4)));
+      const topKBefore = Math.min(20, Math.max(1, Number(ragTopKBeforeInput?.value || 8)));
+      const topKAfter = Math.min(10, Math.max(1, Number(ragTopKAfterInput?.value || 4)));
+      const threshold = Math.min(1, Math.max(0, Number(ragThresholdInput?.value || 0.52)));
+      const rewriteEnabled = (ragRewriteInput?.value || "on") === "on";
+      ragCompareResultsContainer.innerHTML = '<div class="rag-loading">Сравниваю local и cloud по контрольным вопросам…</div>';
+      try {
+        const response = await fetch("/api/rag_compare", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            repeats,
+            question_limit: questionLimit,
+            top_k_before: topKBefore,
+            top_k_after: topKAfter,
+            threshold,
+            enable_query_rewrite: rewriteEnabled
+          }),
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({ error: "Request failed" }));
+          throw new Error(payload.error || "Ошибка запроса");
+        }
+        const payload = await response.json();
+        renderRagCompare(payload);
+      } catch (error) {
+        ragCompareResultsContainer.innerHTML = `<div class="rag-loading">Ошибка: ${escapeHtml(error.message)}</div>`;
       }
     }
 
@@ -1981,6 +2031,93 @@
               <tbody>${rows}</tbody>
             </table>
           </div>
+        </div>
+      `;
+    }
+
+    function renderRagCompare(payload) {
+      if (!ragCompareResultsContainer) return;
+      const reports = Array.isArray(payload.reports) ? payload.reports : [];
+      const shortAnswer = (value, maxLen = 2400) => {
+        const text = String(value || "").trim();
+        if (!text) return "—";
+        if (text.length <= maxLen) return text;
+        return `${text.slice(0, maxLen)}\n\n... [обрезано для UI]`;
+      };
+      const localLatency = reports
+        .map((item) => Number(item.local?.avg_latency_ms))
+        .filter((value) => Number.isFinite(value));
+      const cloudLatency = reports
+        .map((item) => Number(item.cloud?.avg_latency_ms))
+        .filter((value) => Number.isFinite(value));
+      const localMean = localLatency.length
+        ? Math.round(localLatency.reduce((acc, value) => acc + value, 0) / localLatency.length)
+        : "n/a";
+      const cloudMean = cloudLatency.length
+        ? Math.round(cloudLatency.reduce((acc, value) => acc + value, 0) / cloudLatency.length)
+        : "n/a";
+      const rows = reports
+        .map((item) => `
+          <tr>
+            <td style="padding: 6px; border-bottom: 1px solid #2b3f66;">${escapeHtml(item.question || "")}</td>
+            <td style="padding: 6px; border-bottom: 1px solid #2b3f66;">${item.local?.semantic_match ? "✅" : "❌"}</td>
+            <td style="padding: 6px; border-bottom: 1px solid #2b3f66;">${item.cloud?.semantic_match ? "✅" : "❌"}</td>
+            <td style="padding: 6px; border-bottom: 1px solid #2b3f66;">${escapeHtml(item.local?.avg_latency_ms ?? "n/a")}</td>
+            <td style="padding: 6px; border-bottom: 1px solid #2b3f66;">${escapeHtml(item.cloud?.avg_latency_ms ?? "n/a")}</td>
+            <td style="padding: 6px; border-bottom: 1px solid #2b3f66;">${escapeHtml(item.local?.success_rate ?? "n/a")}</td>
+            <td style="padding: 6px; border-bottom: 1px solid #2b3f66;">${escapeHtml(item.cloud?.success_rate ?? "n/a")}</td>
+          </tr>
+        `)
+        .join("");
+      const answerBlocks = reports
+        .map(
+          (item, index) => `
+          <details class="rag-panel" style="margin-top: 10px;">
+            <summary><strong>${index + 1}. ${escapeHtml(item.question || "")}</strong> — раскрыть ответы local/cloud</summary>
+            <div class="rag-panel-grid" style="margin-top: 10px;">
+              <div class="rag-panel">
+                <h4 style="margin-top: 0;">Local: ${escapeHtml(item.local?.model || "n/a")}</h4>
+                <pre style="white-space: pre-wrap;">${escapeHtml(shortAnswer(item.local?.sample_answer))}</pre>
+              </div>
+              <div class="rag-panel">
+                <h4 style="margin-top: 0;">Cloud: ${escapeHtml(item.cloud?.model || "n/a")}</h4>
+                <pre style="white-space: pre-wrap;">${escapeHtml(shortAnswer(item.cloud?.sample_answer))}</pre>
+              </div>
+            </div>
+          </details>
+        `
+        )
+        .join("");
+      ragCompareResultsContainer.innerHTML = `
+        <div class="rag-panel">
+          <h3>Local vs Cloud: качество, скорость, стабильность</h3>
+          <p>
+            Вопросов: <strong>${escapeHtml(payload.total_questions || 0)}</strong>,
+            повторов: <strong>${escapeHtml(payload.repeats_per_question || 0)}</strong><br>
+            Quality OK: local <strong>${escapeHtml(payload.local_quality_ok || 0)}</strong> /
+            cloud <strong>${escapeHtml(payload.cloud_quality_ok || 0)}</strong><br>
+            Avg latency: local <strong>${escapeHtml(localMean)} ms</strong>,
+            cloud <strong>${escapeHtml(cloudMean)} ms</strong>
+          </p>
+          <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr>
+                  <th style="text-align: left; padding: 6px; border-bottom: 1px solid #2b3f66;">Вопрос</th>
+                  <th style="text-align: left; padding: 6px; border-bottom: 1px solid #2b3f66;">Local quality</th>
+                  <th style="text-align: left; padding: 6px; border-bottom: 1px solid #2b3f66;">Cloud quality</th>
+                  <th style="text-align: left; padding: 6px; border-bottom: 1px solid #2b3f66;">Local ms</th>
+                  <th style="text-align: left; padding: 6px; border-bottom: 1px solid #2b3f66;">Cloud ms</th>
+                  <th style="text-align: left; padding: 6px; border-bottom: 1px solid #2b3f66;">Local success</th>
+                  <th style="text-align: left; padding: 6px; border-bottom: 1px solid #2b3f66;">Cloud success</th>
+                </tr>
+              </thead>
+              <tbody>${rows || "<tr><td colspan='7' style='padding: 8px;'>Нет данных.</td></tr>"}</tbody>
+            </table>
+          </div>
+          <h4 style="margin-top: 14px;">Детальные ответы LLM</h4>
+          <p class="sources">Нажмите на вопрос, чтобы развернуть и сравнить тексты local vs cloud.</p>
+          ${answerBlocks || "<div class='rag-loading'>Нет детальных ответов.</div>"}
         </div>
       `;
     }

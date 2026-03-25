@@ -1224,6 +1224,26 @@ def api_rag_chat_scenarios():
     return jsonify(result)
 
 
+@app.route("/api/rag_compare", methods=["POST"])
+def api_rag_compare():
+    payload = request.get_json(force=True, silent=True) or {}
+    repeats = int(payload.get("repeats", 2))
+    question_limit = int(payload.get("question_limit", 4))
+    top_k_before = int(payload.get("top_k_before", rag_service.default_top_k_before))
+    top_k_after = int(payload.get("top_k_after", rag_service.default_top_k_after))
+    threshold = float(payload.get("threshold", rag_service.default_threshold))
+    enable_query_rewrite = bool(payload.get("enable_query_rewrite", True))
+    result = rag_service.compare_generation_backends(
+        repeats=max(1, min(repeats, 5)),
+        question_limit=max(1, min(question_limit, 10)),
+        top_k_before=top_k_before,
+        top_k_after=top_k_after,
+        threshold=threshold,
+        enable_query_rewrite=enable_query_rewrite,
+    )
+    return jsonify(result)
+
+
 # Document Indexer routes
 @app.route("/document_indexer")
 def document_indexer():

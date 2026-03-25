@@ -21,10 +21,12 @@ class Embedder:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         dimensions: Optional[int] = None,
+        force_mock: bool = False,
     ):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model or self.DEFAULT_MODEL
         self.dimensions = dimensions or self.DEFAULT_DIMENSIONS
+        self.force_mock = bool(force_mock)
         self._cache = {}
 
     def embed(self, texts: List[str]) -> List[List[float]]:
@@ -61,6 +63,8 @@ class Embedder:
 
     def _api_call(self, texts: List[str]) -> List[List[float]]:
         """Call OpenAI API for embeddings."""
+        if self.force_mock:
+            return self._generate_mock_embeddings(texts)
         if not self.api_key:
             return self._generate_mock_embeddings(texts)
 
