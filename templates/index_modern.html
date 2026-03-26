@@ -19,6 +19,7 @@
       --warn: #f5a524;
       --danger: #ef6461;
       --radius: 12px;
+      --workspace-height-offset: 92px;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -27,7 +28,7 @@
       font-family: Inter, Segoe UI, Arial, sans-serif;
       background: radial-gradient(1100px 700px at -15% -10%, #1f2c54, var(--bg) 60%);
       color: var(--text);
-      overflow: hidden;
+      overflow: auto;
     }
     body.assignment-mode {
       overflow: auto;
@@ -47,7 +48,8 @@
     .app {
       max-width: 1560px;
       margin: 0 auto;
-      height: 100dvh;
+      height: auto;
+      min-height: 100dvh;
       padding: 10px;
       display: grid;
       grid-template-rows: auto 1fr;
@@ -117,10 +119,10 @@
       color: #b9f3d8;
     }
     .layout {
-      min-height: 0;
-      height: 100%;
-      max-height: 100%;
-      overflow: hidden;
+      min-height: calc(100dvh - var(--workspace-height-offset));
+      height: auto;
+      max-height: none;
+      overflow: visible;
       display: grid;
       grid-template-columns: 340px minmax(0, 1fr) 380px;
       gap: 12px;
@@ -134,12 +136,11 @@
     }
     .left, .right {
       min-height: 0;
-      height: 100%;
-      max-height: 100%;
-      overflow-y: auto;
+      height: auto;
+      max-height: none;
+      overflow: visible;
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
-      scrollbar-gutter: stable;
       padding: 10px;
       display: flex;
       flex-direction: column;
@@ -566,8 +567,8 @@
 
     .chat {
       min-height: 0;
-      max-height: 100%;
-      overflow: hidden;
+      max-height: none;
+      overflow: visible;
       display: grid;
       grid-template-rows: 1fr auto;
       gap: 10px;
@@ -689,11 +690,65 @@
       margin-top: 8px;
     }
     .compare-card strong { color: var(--text); }
+    .opt-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .opt-card {
+      border: 1px solid #2a3b66;
+      background: #0f1a33;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .opt-card strong {
+      color: #d7e6ff;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .opt-delta-pos { color: #7be2af; font-weight: 700; }
+    .opt-delta-neg { color: #ff9f9f; font-weight: 700; }
+    .opt-delta-neutral { color: #ffd27d; font-weight: 700; }
+    .opt-collapse {
+      border: 1px solid #2a3b66;
+      border-radius: 10px;
+      background: #101a32;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .opt-collapse > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 9px 10px;
+      font-weight: 600;
+      color: #cfe0ff;
+      background: #13213f;
+    }
+    .opt-collapse > summary::-webkit-details-marker { display: none; }
+    .opt-collapse > .section-content { padding: 10px; }
     @media (max-width: 1240px) {
       body { overflow: auto; }
       .app { height: auto; }
-      .layout { grid-template-columns: 1fr; }
-      .left, .right, .chat { min-height: auto; }
+      .layout {
+        grid-template-columns: 1fr;
+        height: auto;
+        max-height: none;
+        overflow: visible;
+      }
+      .left, .right, .chat {
+        min-height: auto;
+        height: auto;
+        max-height: none;
+      }
+      .left, .right {
+        overflow-y: visible;
+      }
+      .control-hub {
+        position: static;
+      }
     }
   </style>
 </head>
@@ -897,7 +952,7 @@
         </details>
 
         <details class="section" data-section="local_llm_checks">
-          <summary>Local LLM checks (health + 3 prompts)</summary>
+          <summary>Local LLM checks + optimization lab</summary>
           <div class="section-content">
             <div class="field">
               <label for="local_llm_endpoint">Local endpoint</label>
@@ -907,21 +962,116 @@
               <label for="local_llm_model">Model name (for API payload)</label>
               <input id="local_llm_model" name="local_llm_model" value="{{ local_llm_model }}" placeholder="qwen-local">
             </div>
-            <div class="field">
-              <label for="local_llm_prompt_1">Prompt 1 (simple)</label>
-              <textarea id="local_llm_prompt_1" name="local_llm_prompt_1">{{ local_llm_prompt_1 }}</textarea>
-            </div>
-            <div class="field">
-              <label for="local_llm_prompt_2">Prompt 2 (medium)</label>
-              <textarea id="local_llm_prompt_2" name="local_llm_prompt_2">{{ local_llm_prompt_2 }}</textarea>
-            </div>
-            <div class="field">
-              <label for="local_llm_prompt_3">Prompt 3 (complex)</label>
-              <textarea id="local_llm_prompt_3" name="local_llm_prompt_3">{{ local_llm_prompt_3 }}</textarea>
-            </div>
-            <button type="submit" name="action" value="run_local_llm_checks" formnovalidate class="btn-secondary">Run local LLM checks</button>
+            <details class="opt-collapse">
+              <summary>1) Prompt checks (health + 3 prompts)</summary>
+              <div class="section-content">
+                <div class="field">
+                  <label for="local_llm_prompt_1">Prompt 1 (simple)</label>
+                  <textarea id="local_llm_prompt_1" name="local_llm_prompt_1">{{ local_llm_prompt_1 }}</textarea>
+                </div>
+                <div class="field">
+                  <label for="local_llm_prompt_2">Prompt 2 (medium)</label>
+                  <textarea id="local_llm_prompt_2" name="local_llm_prompt_2">{{ local_llm_prompt_2 }}</textarea>
+                </div>
+                <div class="field">
+                  <label for="local_llm_prompt_3">Prompt 3 (complex)</label>
+                  <textarea id="local_llm_prompt_3" name="local_llm_prompt_3">{{ local_llm_prompt_3 }}</textarea>
+                </div>
+                <button type="submit" name="action" value="run_local_llm_checks" formnovalidate class="btn-secondary">Run local LLM checks</button>
+              </div>
+            </details>
             {% if local_llm_status %}
             <div class="hint" style="margin-top: 8px;">{{ local_llm_status }}</div>
+            {% endif %}
+            <details class="opt-collapse" open>
+              <summary>2) Optimization benchmark (before vs after)</summary>
+              <div class="section-content">
+                <div class="field">
+                  <label for="local_llm_opt_case">Optimization case name</label>
+                  <input id="local_llm_opt_case" name="local_llm_opt_case" value="{{ local_llm_opt_case }}" placeholder="RAG QA assistant">
+                </div>
+                <div class="field">
+                  <label for="local_llm_opt_repeats">Repeats per prompt (1-5)</label>
+                  <input id="local_llm_opt_repeats" name="local_llm_opt_repeats" value="{{ local_llm_opt_repeats }}">
+                </div>
+                <div class="row-3">
+                  <div class="field">
+                    <label for="local_llm_opt_temperature_baseline">Before temperature</label>
+                    <input id="local_llm_opt_temperature_baseline" name="local_llm_opt_temperature_baseline" value="{{ local_llm_opt_temperature_baseline }}">
+                  </div>
+                  <div class="field">
+                    <label for="local_llm_opt_max_tokens_baseline">Before max tokens</label>
+                    <input id="local_llm_opt_max_tokens_baseline" name="local_llm_opt_max_tokens_baseline" value="{{ local_llm_opt_max_tokens_baseline }}">
+                  </div>
+                  <div class="field">
+                    <label for="local_llm_opt_context_baseline">Before context window</label>
+                    <input id="local_llm_opt_context_baseline" name="local_llm_opt_context_baseline" value="{{ local_llm_opt_context_baseline }}">
+                  </div>
+                </div>
+                <div class="row-3">
+                  <div class="field">
+                    <label for="local_llm_opt_temperature_optimized">After temperature</label>
+                    <input id="local_llm_opt_temperature_optimized" name="local_llm_opt_temperature_optimized" value="{{ local_llm_opt_temperature_optimized }}">
+                  </div>
+                  <div class="field">
+                    <label for="local_llm_opt_max_tokens_optimized">After max tokens</label>
+                    <input id="local_llm_opt_max_tokens_optimized" name="local_llm_opt_max_tokens_optimized" value="{{ local_llm_opt_max_tokens_optimized }}">
+                  </div>
+                  <div class="field">
+                    <label for="local_llm_opt_context_optimized">After context window</label>
+                    <input id="local_llm_opt_context_optimized" name="local_llm_opt_context_optimized" value="{{ local_llm_opt_context_optimized }}">
+                  </div>
+                </div>
+                <button type="submit" name="action" value="run_local_llm_optimization" formnovalidate class="btn-secondary">Run benchmark</button>
+              </div>
+            </details>
+            <details class="opt-collapse">
+              <summary>3) Advanced optimization parameters (optional)</summary>
+              <div class="section-content">
+                <div class="row-2">
+                  <div class="field">
+                    <label for="local_llm_opt_model_baseline">Baseline model id</label>
+                    <input id="local_llm_opt_model_baseline" name="local_llm_opt_model_baseline" value="{{ local_llm_opt_model_baseline }}">
+                  </div>
+                  <div class="field">
+                    <label for="local_llm_opt_model_optimized">Optimized model id</label>
+                    <input id="local_llm_opt_model_optimized" name="local_llm_opt_model_optimized" value="{{ local_llm_opt_model_optimized }}">
+                  </div>
+                </div>
+                <div class="row-2">
+                  <div class="field">
+                    <label for="local_llm_opt_quant_baseline">Baseline quantization label</label>
+                    <input id="local_llm_opt_quant_baseline" name="local_llm_opt_quant_baseline" value="{{ local_llm_opt_quant_baseline }}" placeholder="q4_k_m">
+                  </div>
+                  <div class="field">
+                    <label for="local_llm_opt_quant_optimized">Optimized quantization label</label>
+                    <input id="local_llm_opt_quant_optimized" name="local_llm_opt_quant_optimized" value="{{ local_llm_opt_quant_optimized }}" placeholder="q6_k / q8_0 / model variant">
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="local_llm_opt_template_baseline">Baseline prompt template ({prompt} placeholder)</label>
+                  <textarea id="local_llm_opt_template_baseline" name="local_llm_opt_template_baseline">{{ local_llm_opt_template_baseline }}</textarea>
+                </div>
+                <div class="field">
+                  <label for="local_llm_opt_template_optimized">Optimized prompt template ({prompt} placeholder)</label>
+                  <textarea id="local_llm_opt_template_optimized" name="local_llm_opt_template_optimized">{{ local_llm_opt_template_optimized }}</textarea>
+                </div>
+                <div class="field">
+                  <label for="local_llm_opt_expected_1">Expected keywords for Prompt 1 (comma-separated)</label>
+                  <input id="local_llm_opt_expected_1" name="local_llm_opt_expected_1" value="{{ local_llm_opt_expected_1 }}">
+                </div>
+                <div class="field">
+                  <label for="local_llm_opt_expected_2">Expected keywords for Prompt 2 (comma-separated)</label>
+                  <input id="local_llm_opt_expected_2" name="local_llm_opt_expected_2" value="{{ local_llm_opt_expected_2 }}">
+                </div>
+                <div class="field">
+                  <label for="local_llm_opt_expected_3">Expected keywords for Prompt 3 (comma-separated)</label>
+                  <input id="local_llm_opt_expected_3" name="local_llm_opt_expected_3" value="{{ local_llm_opt_expected_3 }}">
+                </div>
+              </div>
+            </details>
+            {% if local_llm_opt_status %}
+            <div class="hint" style="margin-top: 8px;">{{ local_llm_opt_status }}</div>
             {% endif %}
           </div>
         </details>
@@ -1470,6 +1620,103 @@
             <div class="hint">Report will appear here after execution.</div>
             {% endif %}
           </div>
+          {% if local_llm_optimization_report and local_llm_optimization_report.baseline %}
+          <div class="section-content">
+            <label>Optimization benchmark summary</label>
+            <div class="stats">
+              Case: <strong>{{ local_llm_opt_case }}</strong> |
+              Prompts: <strong>{{ local_llm_optimization_report.prompts_count }}</strong> |
+              Repeats: <strong>{{ local_llm_optimization_report.repeats }}</strong>
+            </div>
+            <div class="opt-summary-grid">
+              <div class="opt-card">
+                <strong>Quality</strong>
+                Before: {{ local_llm_optimization_report.baseline.summary.avg_quality_score }}<br>
+                After: {{ local_llm_optimization_report.optimized.summary.avg_quality_score }}<br>
+                {% set dq = local_llm_optimization_report.delta.quality %}
+                Δ: <span class="{% if dq > 0 %}opt-delta-pos{% elif dq < 0 %}opt-delta-neg{% else %}opt-delta-neutral{% endif %}">{{ dq }}</span>
+              </div>
+              <div class="opt-card">
+                <strong>Latency (ms)</strong>
+                Before: {{ local_llm_optimization_report.baseline.summary.avg_latency_ms }}<br>
+                After: {{ local_llm_optimization_report.optimized.summary.avg_latency_ms }}<br>
+                {% set dl = local_llm_optimization_report.delta.latency_ms %}
+                Δ: <span class="{% if dl < 0 %}opt-delta-pos{% elif dl > 0 %}opt-delta-neg{% else %}opt-delta-neutral{% endif %}">{{ dl }}</span>
+              </div>
+              <div class="opt-card">
+                <strong>Stability</strong>
+                Before: {{ local_llm_optimization_report.baseline.summary.success_rate }}<br>
+                After: {{ local_llm_optimization_report.optimized.summary.success_rate }}<br>
+                {% set ds = local_llm_optimization_report.delta.success_rate %}
+                Δ: <span class="{% if ds > 0 %}opt-delta-pos{% elif ds < 0 %}opt-delta-neg{% else %}opt-delta-neutral{% endif %}">{{ ds }}</span>
+              </div>
+              <div class="opt-card">
+                <strong>Resource proxy (output tokens)</strong>
+                Before: {{ local_llm_optimization_report.baseline.summary.avg_output_tokens_est }}<br>
+                After: {{ local_llm_optimization_report.optimized.summary.avg_output_tokens_est }}<br>
+                {% set dr = local_llm_optimization_report.delta.output_tokens_est %}
+                Δ: <span class="{% if dr < 0 %}opt-delta-pos{% elif dr > 0 %}opt-delta-neg{% else %}opt-delta-neutral{% endif %}">{{ dr }}</span>
+              </div>
+            </div>
+          </div>
+          <details class="opt-collapse">
+            <summary>Before vs After details (per prompt)</summary>
+            <div class="section-content">
+              <div class="table-wrap">
+                <table class="local-check-table" style="min-width: 920px;">
+                  <thead>
+                    <tr>
+                      <th>Cfg</th>
+                      <th>#</th>
+                      <th>Prompt</th>
+                      <th>OK</th>
+                      <th>Latency</th>
+                      <th>Quality</th>
+                      <th>Ctx</th>
+                      <th>Output</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for item in local_llm_optimization_report.baseline.rows %}
+                    <tr>
+                      <td>before</td>
+                      <td>{{ item.prompt_id }}.{{ item.run }}</td>
+                      <td>{{ item.prompt[:52] }}{% if item.prompt|length > 52 %}...{% endif %}</td>
+                      <td>{{ "YES" if item.ok else "NO" }}</td>
+                      <td>{{ item.latency_ms }} ms</td>
+                      <td>{{ item.quality.score }}</td>
+                      <td>{{ item.ctx_tokens_est }}/{{ item.ctx_window }}</td>
+                      <td>{{ item.output_tokens_est }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% for item in local_llm_optimization_report.optimized.rows %}
+                    <tr>
+                      <td>after</td>
+                      <td>{{ item.prompt_id }}.{{ item.run }}</td>
+                      <td>{{ item.prompt[:52] }}{% if item.prompt|length > 52 %}...{% endif %}</td>
+                      <td>{{ "YES" if item.ok else "NO" }}</td>
+                      <td>{{ item.latency_ms }} ms</td>
+                      <td>{{ item.quality.score }}</td>
+                      <td>{{ item.ctx_tokens_est }}/{{ item.ctx_window }}</td>
+                      <td>{{ item.output_tokens_est }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+          <details class="opt-collapse">
+            <summary>Raw optimization report (JSON)</summary>
+            <div class="section-content">
+              {% if local_llm_opt_result %}
+              <pre style="margin: 0; white-space: pre-wrap; word-break: break-word; color: var(--muted); font-size: 12px;">{{ local_llm_opt_result }}</pre>
+              {% else %}
+              <div class="hint">Optimization report will appear here after benchmark run.</div>
+              {% endif %}
+            </div>
+          </details>
+          {% endif %}
         </div>
 
         <div class="tab-panel" data-tab-panel="guide">

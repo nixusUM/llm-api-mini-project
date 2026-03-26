@@ -256,6 +256,167 @@ def run_local_llm_checks(endpoint: str, model: str, prompts: list[str]) -> dict[
     }
 
 
+def _estimate_tokens(text: str) -> int:
+    return max(1, len((text or "").strip()) // 4)
+
+
+def _build_prompt_from_template(template: str, prompt: str) -> str:
+    raw = (template or "").strip()
+    if not raw:
+        return prompt
+    if "{prompt}" in raw:
+        return raw.replace("{prompt}", prompt)
+    return f"{raw}\n\n{prompt}"
+
+
+def _apply_context_limit(prompt: str, context_window: int, max_tokens: int) -> tuple[str, int, bool]:
+    budget = max(200, context_window - max_tokens - 64)
+    estimated = _estimate_tokens(prompt)
+    if estimated <= budget:
+        return prompt, estimated, False
+    max_chars = max(240, budget * 4)
+    trimmed = prompt[:max_chars]
+    return trimmed, _estimate_tokens(trimmed), True
+
+
+def _split_keywords(raw_keywords: str) -> list[str]:
+    return [item.strip().lower() for item in (raw_keywords or "").split(",") if item.strip()]
+
+
+def _keyword_quality(answer: str, expected_keywords: list[str]) -> dict[str, object]:
+    if not expected_keywords:
+        return {"matched": 0, "total": 0, "score": 1.0, "hits": []}
+    low = (answer or "").lower()
+    hits = [k for k in expected_keywords if k in low]
+    score = len(hits) / max(1, len(expected_keywords))
+    return {"matched": len(hits), "total": len(expected_keywords), "score": round(score, 3), "hits": hits}
+
+
+def _run_local_suite(
+    endpoint: str,
+    model: str,
+    quant_label: str,
+    prompts: list[dict[str, object]],
+    temperature: float,
+    max_tokens: int,
+    context_window: int,
+    prompt_template: str,
+    repeats: int,
+) -> dict[str, object]:
+    rows: list[dict[str, object]] = []
+    latencies: list[int] = []
+    token_outputs: list[int] = []
+    ok_runs = 0
+    total_runs = 0
+    for item in prompts:
+        prompt = str(item.get("prompt", "")).strip()
+        expected = list(item.get("expected_keywords", []))
+        if not prompt:
+            continue
+        for run_idx in range(1, repeats + 1):
+            full_prompt = _build_prompt_from_template(prompt_template, prompt)
+            prepared, ctx_tokens, truncated = _apply_context_limit(full_prompt, context_window, max_tokens)
+            chat = _local_llm_chat_once(
+                endpoint=endpoint,
+                model=model,
+                prompt=prepared,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            total_runs += 1
+            if chat.get("ok"):
+                ok_runs += 1
+            latency_ms = int(chat.get("latency_ms", 0) or 0)
+            answer = str(chat.get("text", "")).strip()
+            out_tokens = _estimate_tokens(answer)
+            quality = _keyword_quality(answer, expected)
+            latencies.append(latency_ms)
+            token_outputs.append(out_tokens)
+            rows.append(
+                {
+                    "prompt_id": item.get("id"),
+                    "prompt": prompt,
+                    "run": run_idx,
+                    "ok": bool(chat.get("ok", False)),
+                    "latency_ms": latency_ms,
+                    "answer": answer,
+                    "error": str(chat.get("error", "")),
+                    "ctx_tokens_est": ctx_tokens,
+                    "ctx_window": context_window,
+                    "ctx_truncated": truncated,
+                    "output_tokens_est": out_tokens,
+                    "quality": quality,
+                }
+            )
+    avg_latency = int(sum(latencies) / len(latencies)) if latencies else 0
+    avg_output_tokens = int(sum(token_outputs) / len(token_outputs)) if token_outputs else 0
+    quality_scores = [float(r.get("quality", {}).get("score", 0.0)) for r in rows if r.get("ok")]
+    avg_quality = round(sum(quality_scores) / len(quality_scores), 3) if quality_scores else 0.0
+    return {
+        "model": model,
+        "quantization": quant_label,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "context_window": context_window,
+        "prompt_template": prompt_template,
+        "rows": rows,
+        "summary": {
+            "ok_runs": ok_runs,
+            "total_runs": total_runs,
+            "success_rate": round(ok_runs / max(1, total_runs), 3),
+            "avg_latency_ms": avg_latency,
+            "avg_output_tokens_est": avg_output_tokens,
+            "avg_quality_score": avg_quality,
+        },
+    }
+
+
+def run_local_llm_optimization(
+    endpoint: str,
+    prompts: list[dict[str, object]],
+    baseline: dict[str, object],
+    optimized: dict[str, object],
+    repeats: int,
+) -> dict[str, object]:
+    base_report = _run_local_suite(
+        endpoint=endpoint,
+        model=str(baseline["model"]),
+        quant_label=str(baseline["quantization"]),
+        prompts=prompts,
+        temperature=float(baseline["temperature"]),
+        max_tokens=int(baseline["max_tokens"]),
+        context_window=int(baseline["context_window"]),
+        prompt_template=str(baseline["prompt_template"]),
+        repeats=repeats,
+    )
+    opt_report = _run_local_suite(
+        endpoint=endpoint,
+        model=str(optimized["model"]),
+        quant_label=str(optimized["quantization"]),
+        prompts=prompts,
+        temperature=float(optimized["temperature"]),
+        max_tokens=int(optimized["max_tokens"]),
+        context_window=int(optimized["context_window"]),
+        prompt_template=str(optimized["prompt_template"]),
+        repeats=repeats,
+    )
+    base_summary = base_report["summary"]
+    opt_summary = opt_report["summary"]
+    return {
+        "endpoint": endpoint,
+        "repeats": repeats,
+        "prompts_count": len(prompts),
+        "baseline": base_report,
+        "optimized": opt_report,
+        "delta": {
+            "quality": round(float(opt_summary["avg_quality_score"]) - float(base_summary["avg_quality_score"]), 3),
+            "latency_ms": int(opt_summary["avg_latency_ms"]) - int(base_summary["avg_latency_ms"]),
+            "success_rate": round(float(opt_summary["success_rate"]) - float(base_summary["success_rate"]), 3),
+            "output_tokens_est": int(opt_summary["avg_output_tokens_est"]) - int(base_summary["avg_output_tokens_est"]),
+        },
+    }
+
+
 def build_local_result(
     model: str,
     strategy: str,
@@ -454,6 +615,29 @@ def index():
     local_llm_status = ""
     local_llm_result = ""
     local_llm_report: dict[str, object] = {}
+    local_llm_opt_case = "RAG QA assistant"
+    local_llm_opt_repeats = "1"
+    local_llm_opt_model_baseline = LOCAL_LLM_DEFAULT_MODEL
+    local_llm_opt_model_optimized = LOCAL_LLM_DEFAULT_MODEL
+    local_llm_opt_quant_baseline = "q4_k_m (baseline)"
+    local_llm_opt_quant_optimized = "q4_k_m (optimized prompt)"
+    local_llm_opt_temperature_baseline = "0.2"
+    local_llm_opt_temperature_optimized = "0.35"
+    local_llm_opt_max_tokens_baseline = "220"
+    local_llm_opt_max_tokens_optimized = "420"
+    local_llm_opt_context_baseline = "4096"
+    local_llm_opt_context_optimized = "8192"
+    local_llm_opt_template_baseline = "Ответь кратко по фактам.\nВопрос:\n{prompt}\nОтвет:"
+    local_llm_opt_template_optimized = (
+        "Ты помощник по локальному RAG. Дай структурированный ответ:\n"
+        "1) Короткий вывод\n2) Детали\n3) Ограничения/риски\n\nВопрос:\n{prompt}\nОтвет:"
+    )
+    local_llm_opt_expected_1 = "safe call, elvis, !!"
+    local_llm_opt_expected_2 = "источники, цитаты, релевантность"
+    local_llm_opt_expected_3 = "скорость, стабильность, качество"
+    local_llm_opt_status = ""
+    local_llm_opt_result = ""
+    local_llm_optimization_report: dict[str, object] = {}
     tool_to_server_map: dict[str, str] = {}
     try:
         tool_to_server_map = get_tool_to_server_map()
@@ -539,6 +723,47 @@ def index():
         local_llm_prompt_1 = request.form.get("local_llm_prompt_1", local_llm_prompt_1).strip()
         local_llm_prompt_2 = request.form.get("local_llm_prompt_2", local_llm_prompt_2).strip()
         local_llm_prompt_3 = request.form.get("local_llm_prompt_3", local_llm_prompt_3).strip()
+        local_llm_opt_case = request.form.get("local_llm_opt_case", local_llm_opt_case).strip()
+        local_llm_opt_repeats = request.form.get("local_llm_opt_repeats", local_llm_opt_repeats).strip()
+        local_llm_opt_model_baseline = request.form.get(
+            "local_llm_opt_model_baseline", local_llm_opt_model_baseline
+        ).strip() or local_llm_model
+        local_llm_opt_model_optimized = request.form.get(
+            "local_llm_opt_model_optimized", local_llm_opt_model_optimized
+        ).strip() or local_llm_model
+        local_llm_opt_quant_baseline = request.form.get(
+            "local_llm_opt_quant_baseline", local_llm_opt_quant_baseline
+        ).strip()
+        local_llm_opt_quant_optimized = request.form.get(
+            "local_llm_opt_quant_optimized", local_llm_opt_quant_optimized
+        ).strip()
+        local_llm_opt_temperature_baseline = request.form.get(
+            "local_llm_opt_temperature_baseline", local_llm_opt_temperature_baseline
+        ).strip()
+        local_llm_opt_temperature_optimized = request.form.get(
+            "local_llm_opt_temperature_optimized", local_llm_opt_temperature_optimized
+        ).strip()
+        local_llm_opt_max_tokens_baseline = request.form.get(
+            "local_llm_opt_max_tokens_baseline", local_llm_opt_max_tokens_baseline
+        ).strip()
+        local_llm_opt_max_tokens_optimized = request.form.get(
+            "local_llm_opt_max_tokens_optimized", local_llm_opt_max_tokens_optimized
+        ).strip()
+        local_llm_opt_context_baseline = request.form.get(
+            "local_llm_opt_context_baseline", local_llm_opt_context_baseline
+        ).strip()
+        local_llm_opt_context_optimized = request.form.get(
+            "local_llm_opt_context_optimized", local_llm_opt_context_optimized
+        ).strip()
+        local_llm_opt_template_baseline = request.form.get(
+            "local_llm_opt_template_baseline", local_llm_opt_template_baseline
+        ).strip()
+        local_llm_opt_template_optimized = request.form.get(
+            "local_llm_opt_template_optimized", local_llm_opt_template_optimized
+        ).strip()
+        local_llm_opt_expected_1 = request.form.get("local_llm_opt_expected_1", local_llm_opt_expected_1).strip()
+        local_llm_opt_expected_2 = request.form.get("local_llm_opt_expected_2", local_llm_opt_expected_2).strip()
+        local_llm_opt_expected_3 = request.form.get("local_llm_opt_expected_3", local_llm_opt_expected_3).strip()
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -958,6 +1183,61 @@ def index():
             else:
                 local_llm_status = f"Local LLM check: issues found ({ok_prompts}/{total_prompts} prompts)."
             status = local_llm_status
+        elif action == "run_local_llm_optimization":
+            try:
+                repeats = max(1, min(5, int(local_llm_opt_repeats or "1")))
+            except ValueError:
+                repeats = 1
+            prompts_eval = [
+                {
+                    "id": 1,
+                    "prompt": local_llm_prompt_1,
+                    "expected_keywords": _split_keywords(local_llm_opt_expected_1),
+                },
+                {
+                    "id": 2,
+                    "prompt": local_llm_prompt_2,
+                    "expected_keywords": _split_keywords(local_llm_opt_expected_2),
+                },
+                {
+                    "id": 3,
+                    "prompt": local_llm_prompt_3,
+                    "expected_keywords": _split_keywords(local_llm_opt_expected_3),
+                },
+            ]
+            baseline_cfg = {
+                "model": local_llm_opt_model_baseline,
+                "quantization": local_llm_opt_quant_baseline,
+                "temperature": parse_temperature(local_llm_opt_temperature_baseline, 0.2),
+                "max_tokens": parse_max_tokens(local_llm_opt_max_tokens_baseline, 220),
+                "context_window": parse_context_limit(local_llm_opt_context_baseline, 4096),
+                "prompt_template": local_llm_opt_template_baseline,
+            }
+            optimized_cfg = {
+                "model": local_llm_opt_model_optimized,
+                "quantization": local_llm_opt_quant_optimized,
+                "temperature": parse_temperature(local_llm_opt_temperature_optimized, 0.35),
+                "max_tokens": parse_max_tokens(local_llm_opt_max_tokens_optimized, 420),
+                "context_window": parse_context_limit(local_llm_opt_context_optimized, 8192),
+                "prompt_template": local_llm_opt_template_optimized,
+            }
+            report = run_local_llm_optimization(
+                endpoint=local_llm_endpoint,
+                prompts=prompts_eval,
+                baseline=baseline_cfg,
+                optimized=optimized_cfg,
+                repeats=repeats,
+            )
+            local_llm_optimization_report = report
+            local_llm_opt_result = json.dumps(report, ensure_ascii=False, indent=2)
+            delta = report.get("delta", {})
+            local_llm_opt_status = (
+                f"Optimization run done ({local_llm_opt_case or 'case'}). "
+                f"Δquality={delta.get('quality', 0)}, "
+                f"Δlatency_ms={delta.get('latency_ms', 0)}, "
+                f"Δsuccess={delta.get('success_rate', 0)}"
+            )
+            status = local_llm_opt_status
         elif action == "send":
             if prompt:
                 if llm_backend == "local":
@@ -1104,6 +1384,26 @@ def index():
         local_llm_status=local_llm_status,
         local_llm_result=local_llm_result,
         local_llm_report=local_llm_report,
+        local_llm_opt_case=local_llm_opt_case,
+        local_llm_opt_repeats=local_llm_opt_repeats,
+        local_llm_opt_model_baseline=local_llm_opt_model_baseline,
+        local_llm_opt_model_optimized=local_llm_opt_model_optimized,
+        local_llm_opt_quant_baseline=local_llm_opt_quant_baseline,
+        local_llm_opt_quant_optimized=local_llm_opt_quant_optimized,
+        local_llm_opt_temperature_baseline=local_llm_opt_temperature_baseline,
+        local_llm_opt_temperature_optimized=local_llm_opt_temperature_optimized,
+        local_llm_opt_max_tokens_baseline=local_llm_opt_max_tokens_baseline,
+        local_llm_opt_max_tokens_optimized=local_llm_opt_max_tokens_optimized,
+        local_llm_opt_context_baseline=local_llm_opt_context_baseline,
+        local_llm_opt_context_optimized=local_llm_opt_context_optimized,
+        local_llm_opt_template_baseline=local_llm_opt_template_baseline,
+        local_llm_opt_template_optimized=local_llm_opt_template_optimized,
+        local_llm_opt_expected_1=local_llm_opt_expected_1,
+        local_llm_opt_expected_2=local_llm_opt_expected_2,
+        local_llm_opt_expected_3=local_llm_opt_expected_3,
+        local_llm_opt_status=local_llm_opt_status,
+        local_llm_opt_result=local_llm_opt_result,
+        local_llm_optimization_report=local_llm_optimization_report,
         tool_to_server_map=tool_to_server_map,
         registered_servers=list(SERVERS.keys()),
         active_branch=active_branch,
