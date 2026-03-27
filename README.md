@@ -106,6 +106,96 @@ python3 telegram_local_bot.py
 - не нужен `ANTHROPIC_API_KEY`,
 - бот и local-режим в web работают только через `LOCAL_LLM_ENDPOINT`.
 
+## Приватный AI-сервис на локальной LLM (HTTP API)
+
+Сервис: `private_ai_service.py`
+- разворачивается на VPS или домашнем сервере
+- дает HTTP API для чата: `POST /v1/chat`
+- дает OpenAI-совместимый endpoint: `POST /v1/chat/completions` (удобно для web UI этого проекта)
+- имеет базовые ограничения: API key, rate limit, max context
+
+### 1) Настройка `.env`
+
+Добавьте:
+
+```env
+PRIVATE_AI_HOST=0.0.0.0
+PRIVATE_AI_PORT=8099
+PRIVATE_AI_API_KEY=change-me-private-key
+PRIVATE_AI_RATE_LIMIT_PER_MIN=30
+PRIVATE_AI_MAX_CONTEXT_TOKENS=8192
+PRIVATE_AI_DEFAULT_MAX_TOKENS=384
+PRIVATE_AI_DEFAULT_TEMPERATURE=0.3
+PRIVATE_AI_MAX_COMPLETION_TOKENS=1024
+PRIVATE_AI_ALLOW_LOCALHOST_NO_AUTH=1
+```
+
+### 2) Запуск
+
+Сначала локальная модель:
+
+```bash
+llama-server -m "/Users/useruserowicz/work/llm-api-mini-project/models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf" -a qwen-local --host 127.0.0.1 --port 8088
+```
+
+Затем приватный сервис:
+
+```bash
+python3 private_ai_service.py
+```
+
+### 3) Проверка доступа по сети
+
+На сервере:
+
+```bash
+curl -H "X-API-Key: change-me-private-key" http://127.0.0.1:8099/v1/config
+```
+
+С другой машины (замените `<server-ip>`):
+
+```bash
+curl -X POST "http://<server-ip>:8099/v1/chat" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: change-me-private-key" \
+  -d '{"messages":[{"role":"user","content":"Дай 3 пункта о плюсах приватного AI-сервиса"}]}'
+```
+
+### 4) Проверка стабильности при нескольких запросах
+
+```bash
+python3 check_private_ai_service.py \
+  --base-url "http://127.0.0.1:8099" \
+  --api-key "change-me-private-key" \
+  --requests 8 \
+  --parallel 4
+```
+
+Смотрите в JSON:
+- `success_rate`
+- `avg_model_latency_ms`
+- `failed`
+
+### 5) Проверка ограничений
+
+1. **Rate limit**: поставьте `PRIVATE_AI_RATE_LIMIT_PER_MIN=2` и отправьте 3+ запроса подряд -> получите `429`.
+2. **Max context**: поставьте `PRIVATE_AI_MAX_CONTEXT_TOKENS=300` и отправьте длинный диалог -> контекст будет урезан/ограничен сервисом.
+
+Это и есть минимально необходимый приватный AI-сервис на локальной LLM.
+
+### Показ прямо из web UI (без curl)
+
+1. Запустите `private_ai_service.py`.
+2. Откройте `http://127.0.0.1:5051`.
+3. В секции **Local LLM checks + optimization lab** укажите:
+   - `Local endpoint`: `http://127.0.0.1:8099`
+   - `Model name`: `qwen-local`
+4. Нажмите `Run local LLM checks` и затем обычный `Send` в чате.
+
+Почему это работает:
+- web UI проекта отправляет запросы в OpenAI-формате на `/v1/chat/completions`
+- приватный сервис теперь поддерживает этот endpoint.
+
 ## 2) Run CLI
 
 ```bash
