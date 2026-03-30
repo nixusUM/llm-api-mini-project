@@ -5,6 +5,32 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def collect_dev_assistant_paths() -> list[Path]:
+    """Paths for developer-assistant RAG: README, docs/ (incl. API.md), deps & env hints."""
+    candidates: list[Path] = []
+    readme = PROJECT_ROOT / "README.md"
+    if readme.exists():
+        candidates.append(readme)
+    docs_dir = PROJECT_ROOT / "docs"
+    if docs_dir.exists():
+        for path in sorted(docs_dir.rglob("*")):
+            if path.is_file() and path.suffix.lower() in {".md", ".txt", ".json", ".yaml", ".yml"}:
+                candidates.append(path)
+    for extra in ("requirements.txt", ".env.example"):
+        p = PROJECT_ROOT / extra
+        if p.exists():
+            candidates.append(p)
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(path)
+    return unique
+
+
 def collect_corpus_paths() -> list[Path]:
     """Collect README, articles, code, and PDFs used by RAG components."""
     candidates: list[Path] = []

@@ -18,6 +18,10 @@ from mcp_list_tools import list_mcp_tools_sync
 from mcp_orchestrator import get_tool_to_server_map
 from mcp_orchestrator import run_long_flow
 from mcp_orchestrator import SERVERS
+from dev_assistant_rag import (
+    build_dev_assistant_local_llm_prompt,
+    build_project_context_block,
+)
 from rag_service import RAGService
 
 app = Flask(__name__)
@@ -162,10 +166,15 @@ def _local_llm_chat_once(
     prompt: str,
     max_tokens: int = 180,
     temperature: float = 0.2,
+    system_instruction: str | None = None,
 ) -> dict[str, object]:
+    messages: list[dict[str, str]] = []
+    if system_instruction and system_instruction.strip():
+        messages.append({"role": "system", "content": system_instruction.strip()})
+    messages.append({"role": "user", "content": prompt})
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
@@ -638,6 +647,13 @@ def index():
     local_llm_opt_status = ""
     local_llm_opt_result = ""
     local_llm_optimization_report: dict[str, object] = {}
+    dev_help_question = (
+        "Какие точки входа в проекте и что нужно для запуска Telegram-бота и веба?"
+    )
+    dev_help_answer = ""
+    dev_help_context_display = ""
+    dev_help_status = ""
+    dev_help_use_mcp = False
     tool_to_server_map: dict[str, str] = {}
     try:
         tool_to_server_map = get_tool_to_server_map()
@@ -764,6 +780,8 @@ def index():
         local_llm_opt_expected_1 = request.form.get("local_llm_opt_expected_1", local_llm_opt_expected_1).strip()
         local_llm_opt_expected_2 = request.form.get("local_llm_opt_expected_2", local_llm_opt_expected_2).strip()
         local_llm_opt_expected_3 = request.form.get("local_llm_opt_expected_3", local_llm_opt_expected_3).strip()
+        dev_help_question = request.form.get("dev_help_question", dev_help_question).strip()
+        dev_help_use_mcp = request.form.get("dev_help_use_mcp", "") == "on"
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -1166,6 +1184,36 @@ def index():
                     indent=2,
                 )
                 status = f"Orchestration flow failed: {exc}"
+        elif action == "run_dev_assistant_help":
+            q = (request.form.get("dev_help_question") or "").strip()
+            use_mcp_ctx = request.form.get("dev_help_use_mcp", "") == "on"
+            if not q:
+                status = "Введите вопрос ассистенту разработчика."
+            else:
+                try:
+                    prompt, ctx_dict = build_dev_assistant_local_llm_prompt(
+                        q, use_mcp_context=use_mcp_ctx
+                    )
+                    chat = _local_llm_chat_once(
+                        endpoint=local_llm_endpoint,
+                        model=local_llm_model,
+                        prompt=prompt,
+                        max_tokens=900,
+                        temperature=0.15,
+                        system_instruction=None,
+                    )
+                    dev_help_answer = str(chat.get("text", "")).strip()
+                    dev_help_context_display = build_project_context_block(ctx_dict)
+                    src = "MCP" if use_mcp_ctx else "git (как в project_context)"
+                    if chat.get("ok"):
+                        dev_help_status = f"Ответ получен ({chat.get('latency_ms', 0)} ms). Контекст: {src}."
+                        status = dev_help_status
+                    else:
+                        dev_help_status = f"Ошибка локальной LLM: {chat.get('error', '')}"
+                        status = dev_help_status
+                except Exception as exc:
+                    dev_help_status = f"Ошибка ассистента: {exc}"
+                    status = dev_help_status
         elif action == "run_local_llm_checks":
             prompts = [local_llm_prompt_1, local_llm_prompt_2, local_llm_prompt_3]
             report = run_local_llm_checks(
@@ -1404,6 +1452,11 @@ def index():
         local_llm_opt_status=local_llm_opt_status,
         local_llm_opt_result=local_llm_opt_result,
         local_llm_optimization_report=local_llm_optimization_report,
+        dev_help_question=dev_help_question,
+        dev_help_answer=dev_help_answer,
+        dev_help_context_display=dev_help_context_display,
+        dev_help_status=dev_help_status,
+        dev_help_use_mcp=dev_help_use_mcp,
         tool_to_server_map=tool_to_server_map,
         registered_servers=list(SERVERS.keys()),
         active_branch=active_branch,

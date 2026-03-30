@@ -232,7 +232,8 @@
       background: #16264a;
     }
     .section-content { padding: 10px; }
-    .section[data-section="local_llm_checks"][open] > .section-content {
+    .section[data-section="local_llm_checks"][open] > .section-content,
+    .section[data-section="dev_assistant"][open] > .section-content {
       max-height: min(68vh, 760px);
       overflow-y: auto;
       scrollbar-gutter: stable;
@@ -275,6 +276,290 @@
       margin-top: 8px;
     }
     .inline-check input { width: auto; margin: 0; }
+
+    /* Developer doc assistant (RAG) — clarity, sources, quick prompts */
+    .dev-assistant-inner {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding: 2px 2px 6px;
+    }
+    .dev-assistant-hero {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(22, 38, 74, 0.9), rgba(15, 23, 48, 0.95));
+      padding: 12px 14px;
+    }
+    .dev-assistant-lead {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.55;
+      color: #c8d6f5;
+    }
+    .dev-assistant-lead code {
+      font-size: 12px;
+      background: rgba(0, 0, 0, 0.25);
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .dev-assistant-anchor {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+      border-bottom: 1px solid rgba(94, 162, 255, 0.35);
+    }
+    .dev-assistant-anchor:hover {
+      color: #8ec0ff;
+      border-bottom-color: #8ec0ff;
+    }
+    .dev-assistant-steps {
+      list-style: none;
+      margin: 10px 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .dev-assistant-steps li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .dev-assistant-steps .step-num {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(94, 162, 255, 0.2);
+      border: 1px solid rgba(94, 162, 255, 0.45);
+      color: #b6d4ff;
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .dev-assistant-chips-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .dev-assistant-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    button.dev-chip {
+      width: auto;
+      padding: 7px 12px;
+      font-size: 12px;
+      border-radius: 999px;
+      background: #162238;
+      border: 1px solid #2f4766;
+      color: #dbe6ff;
+      line-height: 1.3;
+      text-align: left;
+      transition: background .15s ease, border-color .15s ease;
+    }
+    button.dev-chip:hover {
+      background: #1a2d4d;
+      border-color: #5277be;
+      color: #fff;
+    }
+    button.dev-chip:focus {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(94, 162, 255, 0.22);
+    }
+    .dev-assistant-field textarea.dev-assistant-textarea {
+      min-height: 108px;
+      max-height: 280px;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .dev-assistant-options {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: rgba(12, 18, 36, 0.65);
+    }
+    .dev-assistant-toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      cursor: pointer;
+      margin: 0;
+    }
+    .dev-assistant-toggle input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .dev-assistant-toggle-ui {
+      flex-shrink: 0;
+      width: 40px;
+      height: 22px;
+      border-radius: 11px;
+      background: #2a3654;
+      border: 1px solid var(--line);
+      position: relative;
+      transition: background .2s ease, border-color .2s ease;
+      margin-top: 2px;
+    }
+    .dev-assistant-toggle-ui::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #e9eefc;
+      top: 2px;
+      left: 3px;
+      transition: transform .2s ease;
+    }
+    .dev-assistant-toggle input:checked + .dev-assistant-toggle-ui {
+      background: rgba(47, 191, 127, 0.35);
+      border-color: #2fbf7f;
+    }
+    .dev-assistant-toggle input:checked + .dev-assistant-toggle-ui::after {
+      transform: translateX(16px);
+    }
+    .dev-assistant-toggle input:focus-visible + .dev-assistant-toggle-ui {
+      box-shadow: 0 0 0 3px rgba(94, 162, 255, 0.25);
+    }
+    .dev-assistant-toggle-text {
+      display: block;
+      flex: 1;
+    }
+    .dev-assistant-toggle-text strong {
+      display: block;
+      font-size: 13px;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .dev-assistant-toggle-text small {
+      display: block;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+    .dev-assistant-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    button.dev-assistant-submit {
+      width: auto;
+      min-width: 200px;
+      padding: 11px 20px;
+    }
+    .dev-assistant-status {
+      font-size: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: rgba(21, 31, 59, 0.75);
+      color: #bfd7ff;
+      line-height: 1.45;
+    }
+    .dev-assistant-status--ok {
+      border-color: rgba(47, 191, 127, 0.45);
+      background: rgba(19, 40, 31, 0.55);
+      color: #b9f3d8;
+    }
+    .dev-assistant-status--err {
+      border-color: rgba(239, 100, 97, 0.5);
+      background: rgba(42, 23, 23, 0.6);
+      color: #ffc4c4;
+    }
+    details.dev-assistant-sources {
+      border: 1px dashed rgba(154, 168, 204, 0.35);
+      border-radius: 10px;
+      padding: 0 10px;
+      background: rgba(8, 12, 24, 0.4);
+    }
+    details.dev-assistant-sources > summary {
+      cursor: pointer;
+      padding: 10px 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #aabae3;
+      list-style: none;
+    }
+    details.dev-assistant-sources > summary::-webkit-details-marker { display: none; }
+    .dev-assistant-sources-hint {
+      font-weight: 400;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .dev-assistant-sources-body {
+      padding: 0 4px 12px;
+      border-top: 1px solid rgba(42, 54, 93, 0.7);
+    }
+    .dev-assistant-pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .dev-assistant-pre--context {
+      max-height: 220px;
+      overflow-y: auto;
+      color: #9aa8cc;
+      padding: 8px 0 0;
+    }
+    .dev-assistant-answer {
+      border: 1px solid rgba(94, 162, 255, 0.35);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(21, 35, 62, 0.95), rgba(17, 28, 52, 0.98));
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+      overflow: hidden;
+    }
+    .dev-assistant-answer-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 14px;
+      background: rgba(94, 162, 255, 0.08);
+      border-bottom: 1px solid rgba(42, 54, 93, 0.8);
+    }
+    .dev-assistant-answer-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .dev-assistant-answer-badge {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #7eb6ff;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: rgba(94, 162, 255, 0.12);
+      border: 1px solid rgba(94, 162, 255, 0.25);
+    }
+    .dev-assistant-pre--answer {
+      padding: 14px 16px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: #e9eefc;
+      max-height: min(52vh, 420px);
+      overflow-y: auto;
+    }
+
     .btn-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -972,7 +1257,85 @@
           </div>
         </details>
 
-        <details class="section" data-section="local_llm_checks">
+        <details class="section dev-assistant-section" data-section="dev_assistant" id="dev-assistant-section">
+          <summary>Ассистент по документации проекта (RAG + контекст репозитория)</summary>
+          <div class="section-content dev-assistant-inner">
+            <div class="dev-assistant-hero">
+              <p class="dev-assistant-lead">
+                Ответы опираются на фрагменты из <strong>README</strong>, <code>docs/</code>,
+                <code>requirements.txt</code> и <code>.env.example</code> (нужен индекс:
+                <code>python3 build_dev_assistant_index.py</code>).
+                Генерация — <strong>локальная LLM</strong>;
+                <a href="#local-llm-section" class="dev-assistant-anchor">endpoint и имя модели — в блоке ниже ↓</a>
+              </p>
+              <ul class="dev-assistant-steps">
+                <li><span class="step-num">1</span> Соберите индекс и поднимите локальную модель</li>
+                <li><span class="step-num">2</span> Введите вопрос или нажмите пример</li>
+                <li><span class="step-num">3</span> Нажмите «Получить ответ»</li>
+              </ul>
+            </div>
+
+            <div class="dev-assistant-chips" role="group" aria-label="Примеры вопросов">
+              <span class="dev-assistant-chips-label">Примеры (один клик)</span>
+              <div class="dev-assistant-chip-row">
+                <button type="button" class="dev-chip" data-dev-assistant-prompt="Как запустить web.py и telegram_local_bot.py? Что указать в .env?">Запуск web и Telegram</button>
+                <button type="button" class="dev-chip" data-dev-assistant-prompt="Кратко опиши структуру репозитория: основные скрипты и папки.">Структура репозитория</button>
+                <button type="button" class="dev-chip" data-dev-assistant-prompt="Что делает mcp_local_server.py и какие MCP-tools связаны с git?">MCP и git</button>
+                <button type="button" class="dev-chip" data-dev-assistant-prompt="Как собирается индекс ассистента разработчика и что попадает в RAG?">Индекс и корпус RAG</button>
+              </div>
+            </div>
+
+            <div class="field dev-assistant-field">
+              <label for="dev_help_question">Ваш вопрос</label>
+              <textarea id="dev_help_question" name="dev_help_question" class="dev-assistant-textarea" rows="4" placeholder="Например: где описан приватный AI-сервис и какие у него эндпоинты?">{{ dev_help_question }}</textarea>
+            </div>
+
+            <div class="dev-assistant-options">
+              <label class="dev-assistant-toggle">
+                <input type="checkbox" name="dev_help_use_mcp" id="dev_help_use_mcp" value="on" {% if dev_help_use_mcp %}checked{% endif %}>
+                <span class="dev-assistant-toggle-ui" aria-hidden="true"></span>
+                <span class="dev-assistant-toggle-text">
+                  <strong>Контекст репозитория через MCP</strong>
+                  <small>Ветка, список отслеживаемых файлов и краткий diff подгружаются через stdio-сервер (удобно для демонстрации). Выключено — те же данные напрямую из git, без MCP.</small>
+                </span>
+              </label>
+            </div>
+
+            <div class="dev-assistant-actions">
+              <button type="submit" name="action" value="run_dev_assistant_help" formnovalidate class="btn-primary dev-assistant-submit" id="dev-assistant-submit">
+                <span class="spinner" aria-hidden="true"></span>
+                <span class="btn-label">Получить ответ</span>
+              </button>
+            </div>
+
+            {% if dev_help_status %}
+            <div class="dev-assistant-status{% if dev_help_answer %} dev-assistant-status--ok{% elif 'Ошибка' in dev_help_status or 'ошибк' in (dev_help_status|lower) or 'error' in (dev_help_status|lower) %} dev-assistant-status--err{% endif %}" role="status" aria-live="polite">
+              {{ dev_help_status }}
+            </div>
+            {% endif %}
+
+            {% if dev_help_context_display %}
+            <details class="dev-assistant-sources" {% if dev_help_answer %}open{% endif %}>
+              <summary>Контекст репозитория <span class="dev-assistant-sources-hint">— что попало в промпт (прозрачность / проверка фактов)</span></summary>
+              <div class="dev-assistant-sources-body">
+                <pre class="dev-assistant-pre dev-assistant-pre--context">{{ dev_help_context_display }}</pre>
+              </div>
+            </details>
+            {% endif %}
+
+            {% if dev_help_answer %}
+            <div class="dev-assistant-answer" aria-live="polite">
+              <div class="dev-assistant-answer-header">
+                <span class="dev-assistant-answer-title">Ответ ассистента</span>
+                <span class="dev-assistant-answer-badge">RAG + локальная модель</span>
+              </div>
+              <pre class="dev-assistant-pre dev-assistant-pre--answer">{{ dev_help_answer }}</pre>
+            </div>
+            {% endif %}
+          </div>
+        </details>
+
+        <details class="section" data-section="local_llm_checks" id="local-llm-section">
           <summary>Local LLM checks + optimization lab</summary>
           <div class="section-content">
             <div class="field">
@@ -1894,12 +2257,35 @@
     const chatWindow = document.getElementById("chat-window");
     if (chatWindow) chatWindow.scrollTop = chatWindow.scrollHeight;
 
+    const devAssistantSubmit = document.getElementById("dev-assistant-submit");
+    const devAssistantSubmitLabel = devAssistantSubmit
+      ? devAssistantSubmit.querySelector(".btn-label")
+      : null;
+
     form.addEventListener("submit", (event) => {
       const action = event.submitter ? event.submitter.value : "send";
-      if (action !== "send") return;
-      submitBtn.classList.add("loading");
-      submitBtn.disabled = true;
-      if (submitLabel) submitLabel.textContent = "Sending...";
+      if (action === "send") {
+        submitBtn.classList.add("loading");
+        submitBtn.disabled = true;
+        if (submitLabel) submitLabel.textContent = "Sending...";
+        return;
+      }
+      if (action === "run_dev_assistant_help" && devAssistantSubmit && event.submitter === devAssistantSubmit) {
+        devAssistantSubmit.classList.add("loading");
+        devAssistantSubmit.disabled = true;
+        if (devAssistantSubmitLabel) devAssistantSubmitLabel.textContent = "Запрос выполняется…";
+      }
+    });
+
+    document.querySelectorAll("[data-dev-assistant-prompt]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const ta = document.getElementById("dev_help_question");
+        const text = btn.getAttribute("data-dev-assistant-prompt") || "";
+        if (ta) {
+          ta.value = text;
+          ta.focus();
+        }
+      });
     });
 
     const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
@@ -1975,7 +2361,7 @@
       automation: {
         label: "Автоматизация",
         help: "MCP-инструменты, пайплайны, оркестрация и планировщик в одном потоке.",
-        sections: ["quick_settings", "mcp_tools", "pipeline", "orchestration", "local_llm_checks", "scheduler"],
+        sections: ["quick_settings", "mcp_tools", "pipeline", "orchestration", "dev_assistant", "local_llm_checks", "scheduler"],
         composerActions: [],
         tab: "pipeline",
       },
@@ -2599,6 +2985,18 @@
       runRagQuery();
     }
     setInterval(pollScheduler, 8000);
+
+    (function openDevAssistantAfterReply() {
+      const panel = document.getElementById("dev-assistant-section");
+      {% if dev_help_answer %}
+      if (panel) {
+        panel.open = true;
+        panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      {% elif dev_help_status %}
+      if (panel) panel.open = true;
+      {% endif %}
+    })();
   </script>
 </body>
 </html>

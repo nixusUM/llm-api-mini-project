@@ -6,6 +6,8 @@ from pathlib import Path
 import requests
 from mcp.server.fastmcp import FastMCP
 
+from project_context import get_git_branch, get_git_diff_stat, list_tracked_files
+
 mcp = FastMCP("local-demo-server")
 STATE_PATH = Path(__file__).with_name("data").joinpath("mcp_periodic_state.json")
 PIPELINE_OUTPUTS_DIR = Path(__file__).with_name("data").joinpath("pipeline_outputs")
@@ -396,6 +398,32 @@ def clear_periodic_state() -> dict[str, object]:
     state = _default_state()
     _save_state(state)
     return {"ok": True, "jobs_total": 0, "history_total": 0}
+
+
+@mcp.tool()
+def get_current_git_branch(repo_root: str = "") -> dict[str, object]:
+    """Return current git branch and short commit for the project (or repo_root if inside project)."""
+    root = (repo_root or "").strip() or None
+    return get_git_branch(root)
+
+
+@mcp.tool()
+def list_project_tracked_files(
+    max_files: int = 80,
+    path_pattern: str = "",
+    repo_root: str = "",
+) -> dict[str, object]:
+    """List git-tracked files (optional pathspec glob, e.g. '*.py')."""
+    root = (repo_root or "").strip() or None
+    pat = (path_pattern or "").strip() or None
+    return list_tracked_files(max_files=max_files, pattern=pat, repo_root=root)
+
+
+@mcp.tool()
+def get_working_tree_diff_stat(max_lines: int = 40, repo_root: str = "") -> dict[str, object]:
+    """Unstaged changes summary (git diff --stat)."""
+    root = (repo_root or "").strip() or None
+    return get_git_diff_stat(max_lines=max_lines, repo_root=root)
 
 
 if __name__ == "__main__":

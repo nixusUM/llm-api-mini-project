@@ -50,6 +50,17 @@ python3 telegram_local_bot.py
 Команды в Telegram:
 - `/start` — справка
 - `/health` — пробный запрос к локальной модели
+- `/help <вопрос>` — ассистент разработчика: ответы по документации (RAG по README, `docs/` в т.ч. `docs/API.md`, `requirements.txt`, `.env.example`) и контексту репозитория через **MCP** (`get_current_git_branch`, список файлов, `git diff --stat`; при сбое MCP — тот же контекст через локальный `git`)
+
+Перед первым запуском `/help` соберите индекс (или он создаётся при первом обращении, но дольше):
+
+```bash
+python3 build_dev_assistant_index.py
+```
+
+Те же сведения о репозитории доступны через MCP в `mcp_local_server.py`: `get_current_git_branch`, `list_project_tracked_files`, `get_working_tree_diff_stat`.
+
+В веб-интерфейсе (`python3 web.py`, режим **«Автоматизация»** в левой колонке) откройте блок **«Ассистент разработчика»**: введите вопрос, при демонстрации задания можно включить галочку «контекст через MCP». Нужны поднятая локальная LLM и собранный индекс (`build_dev_assistant_index.py`).
 
 ### Пошаговая проверка (end-to-end)
 
