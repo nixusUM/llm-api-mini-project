@@ -1,6 +1,10 @@
 import json
 import os
+import re
+import subprocess
+import tempfile
 import time
+from pathlib import Path
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -8,6 +12,7 @@ from dotenv import load_dotenv
 
 from dev_assistant_rag import build_dev_assistant_local_llm_prompt
 
+ROOT = Path(__file__).resolve().parent
 LOCAL_LLM_ENDPOINT = "LOCAL_LLM_ENDPOINT"
 LOCAL_LLM_MODEL = "LOCAL_LLM_MODEL"
 TELEGRAM_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
@@ -198,6 +203,107 @@ def extract_help_question(text: str) -> str | None:
     return rest
 
 
+def extract_review_target(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped.startswith("/review_pr"):
+        return None
+    rest = stripped[len("/review_pr") :].strip()
+    if not rest:
+        return ""
+    if rest.startswith("@"):
+        parts = rest.split(None, 1)
+        if len(parts) < 2:
+            return ""
+        return parts[1].strip()
+    return rest
+
+
+def _repo_slug() -> str:
+    value = os.getenv("GITHUB_REPO", "").strip()
+    return value or "nixusUM/llm-api-mini-project"
+
+
+def _pr_number(spec: str) -> str:
+    cleaned = spec.strip()
+    if cleaned.isdigit():
+        return cleaned
+    match = re.search(r"/pull/(\d+)", cleaned)
+    if match:
+        return match.group(1)
+    raise ValueError("Укажите номер PR (например `1`) или ссылку `.../pull/<id>`.")
+
+
+def _gh(*args: str) -> str:
+    proc = subprocess.run(
+        ["gh", *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        msg = (proc.stderr or proc.stdout or "gh failed").strip()
+        raise RuntimeError(msg)
+    return (proc.stdout or "").strip()
+
+
+def _pr_range(spec: str) -> tuple[str, str, str]:
+    number = _pr_number(spec)
+    repo = _repo_slug()
+    out = _gh(
+        "pr",
+        "view",
+        number,
+        "--repo",
+        repo,
+        "--json",
+        "url,baseRefOid,headRefOid",
+    )
+    data = json.loads(out)
+    return str(data["baseRefOid"]), str(data["headRefOid"]), str(data["url"])
+
+
+def review_pr_reply(spec: str) -> str:
+    try:
+        base, head, pr_url = _pr_range(spec)
+        with tempfile.NamedTemporaryFile(prefix="tg_pr_review_", suffix=".md", delete=False) as tmp:
+            out_path = tmp.name
+        _ = _gh(
+            "api",
+            "repos/" + _repo_slug(),
+            "--method",
+            "GET",
+        )
+        proc = subprocess.run(
+            [
+                "python3",
+                "scripts/ai_pr_review.py",
+                "--base",
+                base,
+                "--head",
+                head,
+                "--output",
+                out_path,
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "review script failed").strip()
+            raise RuntimeError(err)
+        review = Path(out_path).read_text(encoding="utf-8", errors="ignore").strip()
+        review = review.replace("<!-- ai-pr-review -->", "").strip()
+        return f"PR: {pr_url}\n\n{review[:3600]}"
+    except Exception as exc:
+        return (
+            "Не удалось выполнить ревью PR.\n"
+            f"Причина: {exc}\n\n"
+            "Проверьте: `gh auth status`, наличие PR и что `scripts/ai_pr_review.py` доступен."
+        )
+
+
 def help_assistant_reply(endpoint: str, model: str, question: str) -> str:
     prompt, _ = build_dev_assistant_local_llm_prompt(question, use_mcp_context=None)
     return call_local_llm(
@@ -218,7 +324,8 @@ def handle_command(text: str) -> str | None:
             "Команды:\n"
             "/start — приветствие\n"
             "/health — проверить локальную LLM\n"
-            "/help <вопрос> — ассистент по README, docs/ и контексту git репозитория"
+            "/help <вопрос> — ассистент по README, docs/ и контексту git репозитория\n"
+            "/review_pr <id|url> — AI code review для PR (diff + RAG + рекомендации)"
         )
     if text == "/health":
         return "Проверяю через следующий запрос..."
@@ -239,6 +346,18 @@ def bot_loop(token: str, endpoint: str, model: str) -> None:
                 if payload is None:
                     continue
                 chat_id, text = payload
+                review_target = extract_review_target(text)
+                if review_target is not None:
+                    if not review_target:
+                        send_tg_message(
+                            token,
+                            chat_id,
+                            "Укажите PR для ревью.\nПример: /review_pr 1\nИли: /review_pr https://github.com/<org>/<repo>/pull/1",
+                        )
+                        continue
+                    send_tg_message(token, chat_id, "Запускаю AI-ревью PR…")
+                    send_tg_message(token, chat_id, review_pr_reply(review_target))
+                    continue
                 help_q = extract_help_question(text)
                 if help_q is not None:
                     if not help_q:

@@ -51,6 +51,7 @@ python3 telegram_local_bot.py
 - `/start` — справка
 - `/health` — пробный запрос к локальной модели
 - `/help <вопрос>` — ассистент разработчика: ответы по документации (RAG по README, `docs/` в т.ч. `docs/API.md`, `requirements.txt`, `.env.example`) и контексту репозитория через **MCP** (`get_current_git_branch`, список файлов, `git diff --stat`; при сбое MCP — тот же контекст через локальный `git`)
+- `/review_pr <id|url>` — AI-ревью PR (получает diff и changed files, использует RAG по docs + коду, возвращает баги/архитектуру/рекомендации)
 
 Перед первым запуском `/help` соберите индекс (или он создаётся при первом обращении, но дольше):
 
@@ -231,6 +232,44 @@ python3 cli.py
 1. В GitHub репозитории добавьте secret: `ANTHROPIC_API_KEY`.
 2. (Опционально) добавьте repo variable: `ANTHROPIC_MODEL`.
 3. Откройте/обновите PR — комментарий AI-ревью появится автоматически.
+
+### Наглядный запуск через Telegram-бота
+
+1. Запустите бота:
+
+```bash
+python3 telegram_local_bot.py
+```
+
+2. В Telegram отправьте:
+   - `/start`
+   - `/review_pr 1`  
+     или `/review_pr https://github.com/nixusUM/llm-api-mini-project/pull/1`
+
+Бот вернет текст ревью по PR в формате:
+- потенциальные баги,
+- архитектурные проблемы,
+- рекомендации.
+
+### Автоматическое создание demo PR (одной командой)
+
+Если нужно быстро показать полный цикл (изменение -> push -> PR -> `/review_pr`), запустите:
+
+```bash
+python3 scripts/create_demo_pr.py
+```
+
+Скрипт автоматически:
+- создаст ветку `demo/tg-review-auto-<timestamp>`,
+- добавит demo-строку в `docs/API.md`,
+- сделает commit и push,
+- откроет PR в `main` и выведет URL.
+
+После этого в Telegram отправьте:
+
+```text
+/review_pr <номер_PR_из_URL>
+```
 
 ## 3) Run Web
 
