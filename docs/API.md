@@ -39,3 +39,5 @@ Telegram-бот и блок ассистента в UI ходят в endpoint и
 
 Пересборка RAG для `/help`: `python3 build_dev_assistant_index.py` → `document_indices/index_dev_assistant.json`.
 # demo change
+
+Demo note for Telegram PR review
