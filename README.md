@@ -213,6 +213,25 @@ python3 check_private_ai_service.py \
 python3 cli.py
 ```
 
+## AI code review on PR (GitHub Actions)
+
+Автоматическое ревью PR запускается workflow:
+- `.github/workflows/ai-pr-review.yml`
+- скрипт: `scripts/ai_pr_review.py`
+
+Что делает пайплайн:
+- берет diff и список измененных файлов (`base...head`);
+- строит RAG-контекст по `README.md`, `docs/` и коду репозитория;
+- публикует комментарий в PR с блоками:
+  - потенциальные баги,
+  - архитектурные проблемы,
+  - рекомендации.
+
+Настройка:
+1. В GitHub репозитории добавьте secret: `ANTHROPIC_API_KEY`.
+2. (Опционально) добавьте repo variable: `ANTHROPIC_MODEL`.
+3. Откройте/обновите PR — комментарий AI-ревью появится автоматически.
+
 ## 3) Run Web
 
 ```bash
