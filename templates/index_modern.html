@@ -911,6 +911,22 @@
       padding: 10px;
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
     }
+    .support-inline {
+      border: 1px solid #2f4677;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #122242, #101b34);
+      padding: 10px;
+    }
+    .support-inline h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+    .support-inline .mini {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 8px;
+      line-height: 1.45;
+    }
 
     .tabs {
       display: flex;
@@ -1099,6 +1115,7 @@
     </div>
 
     <form method="post" id="prompt-form" class="layout">
+      <input type="hidden" id="action_override" name="action_override" value="">
       <aside class="panel left">
         <div class="control-hub">
           <p class="control-hub-title">Unified AI Control Hub</p>
@@ -1667,6 +1684,57 @@
             <div class="hint">No messages yet. Start with invariant setup, then run conflict and non-conflict prompts.</div>
           {% endif %}
         </div>
+
+        <section class="support-inline" id="support-assistant-section">
+          <h3>Ассистент поддержки пользователей (RAG FAQ + MCP тикеты)</h3>
+          <div class="mini">Контекст тикета берется через MCP JSON CRM, знания — из FAQ/docs. Показ удобно делать отсюда, прямо над полем сообщений.</div>
+          <div class="dev-assistant-chips" role="group" aria-label="Примеры support-вопросов">
+            <span class="dev-assistant-chips-label">Примеры</span>
+            <div class="dev-assistant-chip-row">
+              <button type="button" class="dev-chip" data-support-ticket="TCK-1001" data-support-question="Почему не работает авторизация?">Авторизация</button>
+              <button type="button" class="dev-chip" data-support-ticket="TCK-1002" data-support-question="Почему не продлилась подписка?">Подписка</button>
+              <button type="button" class="dev-chip" data-support-ticket="TCK-1003" data-support-question="Почему не приходят email-уведомления?">Уведомления</button>
+            </div>
+          </div>
+          <div class="row-3">
+            <div class="field">
+              <label for="support_ticket_id">Ticket ID</label>
+              <input id="support_ticket_id" name="support_ticket_id" value="{{ support_ticket_id }}" placeholder="TCK-1001">
+            </div>
+            <div class="field" style="grid-column: span 2;">
+              <label for="support_question">Вопрос пользователя</label>
+              <input id="support_question" name="support_question" value="{{ support_question }}" placeholder="Почему не работает авторизация?">
+            </div>
+          </div>
+          <div class="dev-assistant-actions">
+            <button type="submit" name="action" value="run_support_assistant_help" formnovalidate class="btn-primary dev-assistant-submit" id="support-assistant-submit">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-label">Ответить по тикету</span>
+            </button>
+          </div>
+          {% if support_status %}
+          <div class="dev-assistant-status{% if support_answer %} dev-assistant-status--ok{% elif 'Ошибка' in support_status or 'ошибк' in (support_status|lower) or 'error' in (support_status|lower) %} dev-assistant-status--err{% endif %}" role="status" aria-live="polite">
+            {{ support_status }}
+          </div>
+          {% endif %}
+          {% if support_context_display %}
+          <details class="dev-assistant-sources" {% if support_answer %}open{% endif %}>
+            <summary>Контекст тикета (MCP JSON)</summary>
+            <div class="dev-assistant-sources-body">
+              <pre class="dev-assistant-pre dev-assistant-pre--context">{{ support_context_display }}</pre>
+            </div>
+          </details>
+          {% endif %}
+          {% if support_answer %}
+          <div class="dev-assistant-answer" aria-live="polite">
+            <div class="dev-assistant-answer-header">
+              <span class="dev-assistant-answer-title">Ответ support-ассистента</span>
+              <span class="dev-assistant-answer-badge">RAG FAQ + MCP context</span>
+            </div>
+            <pre class="dev-assistant-pre dev-assistant-pre--answer">{{ support_answer }}</pre>
+          </div>
+          {% endif %}
+        </section>
 
         <div class="composer">
           <label for="prompt">Message</label>
@@ -2252,6 +2320,7 @@
 
   <script>
     const form = document.getElementById("prompt-form");
+    const actionOverrideInput = document.getElementById("action_override");
     const submitBtn = document.getElementById("submit-btn");
     const submitLabel = submitBtn ? submitBtn.querySelector(".btn-label") : null;
     const chatWindow = document.getElementById("chat-window");
@@ -2261,9 +2330,16 @@
     const devAssistantSubmitLabel = devAssistantSubmit
       ? devAssistantSubmit.querySelector(".btn-label")
       : null;
+    const supportAssistantSubmit = document.getElementById("support-assistant-submit");
+    const supportAssistantSubmitLabel = supportAssistantSubmit
+      ? supportAssistantSubmit.querySelector(".btn-label")
+      : null;
 
     form.addEventListener("submit", (event) => {
       const action = event.submitter ? event.submitter.value : "send";
+      if (actionOverrideInput) {
+        actionOverrideInput.value = action || "";
+      }
       if (action === "send") {
         submitBtn.classList.add("loading");
         submitBtn.disabled = true;
@@ -2275,6 +2351,11 @@
         devAssistantSubmit.disabled = true;
         if (devAssistantSubmitLabel) devAssistantSubmitLabel.textContent = "Запрос выполняется…";
       }
+      if (action === "run_support_assistant_help" && supportAssistantSubmit && event.submitter === supportAssistantSubmit) {
+        supportAssistantSubmit.classList.add("loading");
+        supportAssistantSubmit.disabled = true;
+        if (supportAssistantSubmitLabel) supportAssistantSubmitLabel.textContent = "Обрабатываю тикет…";
+      }
     });
 
     document.querySelectorAll("[data-dev-assistant-prompt]").forEach((btn) => {
@@ -2284,6 +2365,19 @@
         if (ta) {
           ta.value = text;
           ta.focus();
+        }
+      });
+    });
+    document.querySelectorAll("[data-support-ticket]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const ticketInput = document.getElementById("support_ticket_id");
+        const questionInput = document.getElementById("support_question");
+        const ticket = btn.getAttribute("data-support-ticket") || "";
+        const question = btn.getAttribute("data-support-question") || "";
+        if (ticketInput) ticketInput.value = ticket;
+        if (questionInput) {
+          questionInput.value = question;
+          questionInput.focus();
         }
       });
     });
@@ -2995,6 +3089,18 @@
       }
       {% elif dev_help_status %}
       if (panel) panel.open = true;
+      {% endif %}
+    })();
+
+    (function openSupportAssistantAfterReply() {
+      const panel = document.getElementById("support-assistant-section");
+      {% if support_answer %}
+      if (panel) {
+        if (panel.tagName.toLowerCase() === "details") panel.open = true;
+        panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+      {% elif support_status %}
+      if (panel && panel.tagName.toLowerCase() === "details") panel.open = true;
       {% endif %}
     })();
   </script>

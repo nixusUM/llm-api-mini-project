@@ -52,11 +52,18 @@ python3 telegram_local_bot.py
 - `/health` — пробный запрос к локальной модели
 - `/help <вопрос>` — ассистент разработчика: ответы по документации (RAG по README, `docs/` в т.ч. `docs/API.md`, `requirements.txt`, `.env.example`) и контексту репозитория через **MCP** (`get_current_git_branch`, список файлов, `git diff --stat`; при сбое MCP — тот же контекст через локальный `git`)
 - `/review_pr <id|url>` — AI-ревью PR (получает diff и changed files, использует RAG по docs + коду, возвращает баги/архитектуру/рекомендации)
+- `/support <ticket_id> <вопрос>` — ассистент поддержки (RAG по FAQ + контекст тикета из MCP JSON CRM)
 
 Перед первым запуском `/help` соберите индекс (или он создаётся при первом обращении, но дольше):
 
 ```bash
 python3 build_dev_assistant_index.py
+```
+
+Для сценария поддержки (FAQ + тикеты) индекс можно собрать отдельно:
+
+```bash
+python3 build_support_assistant_index.py
 ```
 
 Те же сведения о репозитории доступны через MCP в `mcp_local_server.py`: `get_current_git_branch`, `list_project_tracked_files`, `get_working_tree_diff_stat`.
@@ -270,6 +277,64 @@ python3 scripts/create_demo_pr.py
 ```text
 /review_pr <номер_PR_из_URL>
 ```
+
+## Ассистент поддержки пользователей (Support)
+
+Мини-сервис поддержки использует:
+- RAG по `docs/SUPPORT_FAQ.md` + `README.md` + `docs/API.md`
+- MCP-контекст тикетов/пользователей из JSON:
+  - `support_data/users.json`
+  - `support_data/tickets.json`
+
+MCP-инструменты:
+- `get_support_user`
+- `get_support_ticket`
+- `get_support_ticket_context`
+
+### Быстрый показ (Telegram)
+
+1. Запуск:
+
+```bash
+python3 telegram_local_bot.py
+```
+
+2. В Telegram:
+
+```text
+/support TCK-1001 Почему не работает авторизация?
+```
+
+Ожидаемо ассистент ответит с учетом контекста тикета и FAQ:
+- вероятная причина,
+- шаги для пользователя,
+- шаги поддержки,
+- нужна ли эскалация.
+
+### Проверка MCP вручную
+
+```bash
+python3 mcp_list_tools.py --call get_support_ticket_context '{"ticket_id":"TCK-1001"}'
+```
+
+### Показ без команд (web-форма)
+
+1. Запустите web UI:
+
+```bash
+python3 web.py
+```
+
+2. В режиме **«Автоматизация»** откройте блок:
+   - **«Ассистент поддержки пользователей (RAG FAQ + MCP тикеты)»**
+3. Укажите:
+   - `Ticket ID`: `TCK-1001`
+   - вопрос: `Почему не работает авторизация?`
+4. Нажмите **«Ответить по тикету»**.
+
+Интерфейс покажет:
+- контекст тикета из MCP JSON,
+- ответ ассистента по RAG (FAQ/docs) с учетом данных пользователя/тикета.
 
 ## 3) Run Web
 

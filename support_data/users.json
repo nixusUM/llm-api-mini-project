@@ -1,0 +1,29 @@
+[
+  {
+    "user_id": "U-100",
+    "email": "ivan.petrov@example.com",
+    "name": "Ivan Petrov",
+    "plan": "pro",
+    "email_verified": false,
+    "status": "active",
+    "language": "ru"
+  },
+  {
+    "user_id": "U-101",
+    "email": "anna.smirnova@example.com",
+    "name": "Anna Smirnova",
+    "plan": "team",
+    "email_verified": true,
+    "status": "active",
+    "language": "ru"
+  },
+  {
+    "user_id": "U-102",
+    "email": "john.lee@example.com",
+    "name": "John Lee",
+    "plan": "free",
+    "email_verified": true,
+    "status": "suspended",
+    "language": "en"
+  }
+]

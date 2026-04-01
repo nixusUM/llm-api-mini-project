@@ -11,6 +11,41 @@ from project_context import get_git_branch, get_git_diff_stat, list_tracked_file
 mcp = FastMCP("local-demo-server")
 STATE_PATH = Path(__file__).with_name("data").joinpath("mcp_periodic_state.json")
 PIPELINE_OUTPUTS_DIR = Path(__file__).with_name("data").joinpath("pipeline_outputs")
+SUPPORT_USERS_PATH = Path(__file__).with_name("support_data").joinpath("users.json")
+SUPPORT_TICKETS_PATH = Path(__file__).with_name("support_data").joinpath("tickets.json")
+
+
+def _load_support_json(path: Path) -> list[dict[str, object]]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _find_user(users: list[dict[str, object]], user_id: str) -> dict[str, object] | None:
+    uid = (user_id or "").strip()
+    if not uid:
+        return None
+    for user in users:
+        if not isinstance(user, dict):
+            continue
+        if str(user.get("user_id", "")).strip() == uid:
+            return user
+    return None
+
+
+def _find_ticket(tickets: list[dict[str, object]], ticket_id: str) -> dict[str, object] | None:
+    tid = (ticket_id or "").strip()
+    if not tid:
+        return None
+    for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
+        if str(ticket.get("ticket_id", "")).strip() == tid:
+            return ticket
+    return None
 
 
 @mcp.tool()
@@ -398,6 +433,51 @@ def clear_periodic_state() -> dict[str, object]:
     state = _default_state()
     _save_state(state)
     return {"ok": True, "jobs_total": 0, "history_total": 0}
+
+
+@mcp.tool()
+def get_support_user(user_id: str) -> dict[str, object]:
+    """Load support user profile from local JSON CRM mock."""
+    users = _load_support_json(SUPPORT_USERS_PATH)
+    user = _find_user(users, user_id)
+    if user is None:
+        return {"ok": False, "error": "user_not_found", "user_id": user_id}
+    return {"ok": True, "user": user}
+
+
+@mcp.tool()
+def get_support_ticket(ticket_id: str) -> dict[str, object]:
+    """Load support ticket from local JSON ticket store."""
+    tickets = _load_support_json(SUPPORT_TICKETS_PATH)
+    ticket = _find_ticket(tickets, ticket_id)
+    if ticket is None:
+        return {"ok": False, "error": "ticket_not_found", "ticket_id": ticket_id}
+    return {"ok": True, "ticket": ticket}
+
+
+@mcp.tool()
+def get_support_ticket_context(ticket_id: str) -> dict[str, object]:
+    """Return joined ticket + user context for support assistant prompts."""
+    tickets = _load_support_json(SUPPORT_TICKETS_PATH)
+    users = _load_support_json(SUPPORT_USERS_PATH)
+    ticket = _find_ticket(tickets, ticket_id)
+    if ticket is None:
+        return {"ok": False, "error": "ticket_not_found", "ticket_id": ticket_id}
+    user = _find_user(users, str(ticket.get("user_id", "")))
+    hints: list[str] = []
+    if isinstance(user, dict) and not bool(user.get("email_verified", False)):
+        hints.append("email_not_verified")
+    if str(ticket.get("category", "")) == "auth" and int(ticket.get("recent_attempts", 0) or 0) >= 5:
+        hints.append("possible_rate_limit_lock")
+    if str(ticket.get("last_error_code", "")).startswith("BILLING_"):
+        hints.append("check_payment_provider")
+    return {
+        "ok": True,
+        "ticket": ticket,
+        "user": user or {},
+        "hints": hints,
+        "context_source": "MCP JSON (support_data/users.json + support_data/tickets.json)",
+    }
 
 
 @mcp.tool()

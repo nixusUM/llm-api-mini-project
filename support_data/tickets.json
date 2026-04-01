@@ -1,0 +1,38 @@
+[
+  {
+    "ticket_id": "TCK-1001",
+    "user_id": "U-100",
+    "category": "auth",
+    "subject": "Не работает авторизация",
+    "description": "После ввода пароля получаю invalid credentials.",
+    "status": "open",
+    "priority": "high",
+    "created_at": "2026-03-31T09:15:00Z",
+    "last_error_code": "AUTH_INVALID_CREDENTIALS",
+    "recent_attempts": 6
+  },
+  {
+    "ticket_id": "TCK-1002",
+    "user_id": "U-101",
+    "category": "billing",
+    "subject": "Подписка не продлилась",
+    "description": "Оплата не прошла, тариф стал free.",
+    "status": "open",
+    "priority": "medium",
+    "created_at": "2026-03-30T17:20:00Z",
+    "last_error_code": "BILLING_PAYMENT_DECLINED",
+    "recent_attempts": 1
+  },
+  {
+    "ticket_id": "TCK-1003",
+    "user_id": "U-102",
+    "category": "notifications",
+    "subject": "Не приходят email-уведомления",
+    "description": "Письма о событиях не приходят уже 2 дня.",
+    "status": "in_progress",
+    "priority": "low",
+    "created_at": "2026-03-29T13:40:00Z",
+    "last_error_code": "MAIL_BOUNCE",
+    "recent_attempts": 0
+  }
+]

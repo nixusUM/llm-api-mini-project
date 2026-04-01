@@ -22,6 +22,7 @@ from dev_assistant_rag import (
     build_dev_assistant_local_llm_prompt,
     build_project_context_block,
 )
+from support_assistant_rag import build_support_assistant_local_prompt
 from rag_service import RAGService
 
 app = Flask(__name__)
@@ -654,6 +655,11 @@ def index():
     dev_help_context_display = ""
     dev_help_status = ""
     dev_help_use_mcp = False
+    support_ticket_id = "TCK-1001"
+    support_question = "Почему не работает авторизация?"
+    support_answer = ""
+    support_context_display = ""
+    support_status = ""
     tool_to_server_map: dict[str, str] = {}
     try:
         tool_to_server_map = get_tool_to_server_map()
@@ -683,6 +689,9 @@ def index():
 
     if request.method == "POST":
         action = request.form.get("action", "send").strip().lower()
+        action_override = request.form.get("action_override", "").strip().lower()
+        if action_override:
+            action = action_override
         prompt = request.form.get("prompt", "").strip()
         selected_model = request.form.get("selected_model", default_model).strip()
         llm_backend = request.form.get("llm_backend", llm_backend).strip().lower()
@@ -782,6 +791,8 @@ def index():
         local_llm_opt_expected_3 = request.form.get("local_llm_opt_expected_3", local_llm_opt_expected_3).strip()
         dev_help_question = request.form.get("dev_help_question", dev_help_question).strip()
         dev_help_use_mcp = request.form.get("dev_help_use_mcp", "") == "on"
+        support_ticket_id = request.form.get("support_ticket_id", support_ticket_id).strip()
+        support_question = request.form.get("support_question", support_question).strip()
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -1214,6 +1225,40 @@ def index():
                 except Exception as exc:
                     dev_help_status = f"Ошибка ассистента: {exc}"
                     status = dev_help_status
+        elif action == "run_support_assistant_help":
+            ticket_id = (request.form.get("support_ticket_id") or "").strip()
+            q = (request.form.get("support_question") or "").strip()
+            if not ticket_id or not q:
+                support_status = "Введите ticket_id и вопрос для ассистента поддержки."
+                status = support_status
+            else:
+                try:
+                    prompt, ctx_dict = build_support_assistant_local_prompt(
+                        ticket_id=ticket_id,
+                        question=q,
+                    )
+                    chat = _local_llm_chat_once(
+                        endpoint=local_llm_endpoint,
+                        model=local_llm_model,
+                        prompt=prompt,
+                        max_tokens=900,
+                        temperature=0.15,
+                        system_instruction=None,
+                    )
+                    support_answer = str(chat.get("text", "")).strip()
+                    support_context_display = json.dumps(ctx_dict, ensure_ascii=False, indent=2)
+                    if chat.get("ok"):
+                        support_status = (
+                            f"Ответ поддержки получен ({chat.get('latency_ms', 0)} ms). "
+                            f"Тикет: {ticket_id}."
+                        )
+                        status = support_status
+                    else:
+                        support_status = f"Ошибка локальной LLM: {chat.get('error', '')}"
+                        status = support_status
+                except Exception as exc:
+                    support_status = f"Ошибка ассистента поддержки: {exc}"
+                    status = support_status
         elif action == "run_local_llm_checks":
             prompts = [local_llm_prompt_1, local_llm_prompt_2, local_llm_prompt_3]
             report = run_local_llm_checks(
@@ -1457,6 +1502,11 @@ def index():
         dev_help_context_display=dev_help_context_display,
         dev_help_status=dev_help_status,
         dev_help_use_mcp=dev_help_use_mcp,
+        support_ticket_id=support_ticket_id,
+        support_question=support_question,
+        support_answer=support_answer,
+        support_context_display=support_context_display,
+        support_status=support_status,
         tool_to_server_map=tool_to_server_map,
         registered_servers=list(SERVERS.keys()),
         active_branch=active_branch,
@@ -1625,4 +1675,11 @@ def document_indexer():
 if __name__ == "__main__":
     load_dotenv()
     port = int(os.getenv("PORT", "5051"))
-    app.run(debug=True, host="127.0.0.1", port=port)
+    web_debug = os.getenv("WEB_DEBUG", "0").strip().lower() in {"1", "true", "yes", "on"}
+    web_reloader = os.getenv("WEB_RELOADER", "0").strip().lower() in {"1", "true", "yes", "on"}
+    app.run(
+        debug=web_debug,
+        use_reloader=web_reloader if web_debug else False,
+        host="127.0.0.1",
+        port=port,
+    )

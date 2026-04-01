@@ -11,6 +11,7 @@ from urllib import request as urlrequest
 from dotenv import load_dotenv
 
 from dev_assistant_rag import build_dev_assistant_local_llm_prompt
+from support_assistant_rag import build_support_assistant_local_prompt
 
 ROOT = Path(__file__).resolve().parent
 LOCAL_LLM_ENDPOINT = "LOCAL_LLM_ENDPOINT"
@@ -218,6 +219,24 @@ def extract_review_target(text: str) -> str | None:
     return rest
 
 
+def extract_support_request(text: str) -> tuple[str, str] | None:
+    stripped = text.strip()
+    if not stripped.startswith("/support"):
+        return None
+    rest = stripped[len("/support") :].strip()
+    if not rest:
+        return "", ""
+    if rest.startswith("@"):
+        parts = rest.split(None, 1)
+        if len(parts) < 2:
+            return "", ""
+        rest = parts[1].strip()
+    parts = rest.split(None, 1)
+    if len(parts) < 2:
+        return parts[0].strip(), ""
+    return parts[0].strip(), parts[1].strip()
+
+
 def _repo_slug() -> str:
     value = os.getenv("GITHUB_REPO", "").strip()
     return value or "nixusUM/llm-api-mini-project"
@@ -316,6 +335,18 @@ def help_assistant_reply(endpoint: str, model: str, question: str) -> str:
     )
 
 
+def support_assistant_reply(endpoint: str, model: str, ticket_id: str, question: str) -> str:
+    prompt, _ = build_support_assistant_local_prompt(ticket_id=ticket_id, question=question)
+    return call_local_llm(
+        endpoint,
+        model,
+        prompt,
+        system_instruction=None,
+        temperature=0.15,
+        max_tokens=900,
+    )
+
+
 def handle_command(text: str) -> str | None:
     if text == "/start":
         return (
@@ -325,7 +356,8 @@ def handle_command(text: str) -> str | None:
             "/start — приветствие\n"
             "/health — проверить локальную LLM\n"
             "/help <вопрос> — ассистент по README, docs/ и контексту git репозитория\n"
-            "/review_pr <id|url> — AI code review для PR (diff + RAG + рекомендации)"
+            "/review_pr <id|url> — AI code review для PR (diff + RAG + рекомендации)\n"
+            "/support <ticket_id> <вопрос> — поддержка с учетом контекста тикета"
         )
     if text == "/health":
         return "Проверяю через следующий запрос..."
@@ -357,6 +389,20 @@ def bot_loop(token: str, endpoint: str, model: str) -> None:
                         continue
                     send_tg_message(token, chat_id, "Запускаю AI-ревью PR…")
                     send_tg_message(token, chat_id, review_pr_reply(review_target))
+                    continue
+                support_req = extract_support_request(text)
+                if support_req is not None:
+                    ticket_id, support_question = support_req
+                    if not ticket_id or not support_question:
+                        send_tg_message(
+                            token,
+                            chat_id,
+                            "Укажите тикет и вопрос.\nПример: /support TCK-1001 Почему не работает авторизация?",
+                        )
+                        continue
+                    send_tg_message(token, chat_id, f"Проверяю тикет {ticket_id} и FAQ…")
+                    reply = support_assistant_reply(endpoint, model, ticket_id, support_question)
+                    send_tg_message(token, chat_id, reply)
                     continue
                 help_q = extract_help_question(text)
                 if help_q is not None:
