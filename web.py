@@ -22,6 +22,7 @@ from dev_assistant_rag import (
     build_dev_assistant_local_llm_prompt,
     build_project_context_block,
 )
+from file_ops_assistant import run_file_ops_goal
 from support_assistant_rag import build_support_assistant_local_prompt
 from rag_service import RAGService
 
@@ -660,6 +661,10 @@ def index():
     support_answer = ""
     support_context_display = ""
     support_status = ""
+    file_ops_goal = "find_usages"
+    file_ops_query = "get_support_ticket_context"
+    file_ops_status = ""
+    file_ops_result = ""
     tool_to_server_map: dict[str, str] = {}
     try:
         tool_to_server_map = get_tool_to_server_map()
@@ -793,6 +798,8 @@ def index():
         dev_help_use_mcp = request.form.get("dev_help_use_mcp", "") == "on"
         support_ticket_id = request.form.get("support_ticket_id", support_ticket_id).strip()
         support_question = request.form.get("support_question", support_question).strip()
+        file_ops_goal = request.form.get("file_ops_goal", file_ops_goal).strip()
+        file_ops_query = request.form.get("file_ops_query", file_ops_query).strip()
         selected_branch = request.form.get("selected_branch", active_branch).strip() or active_branch
 
         parsed_temp = parse_temperature(temperature, 0.7)
@@ -1259,6 +1266,29 @@ def index():
                 except Exception as exc:
                     support_status = f"Ошибка ассистента поддержки: {exc}"
                     status = support_status
+        elif action == "run_file_ops_goal":
+            goal = (request.form.get("file_ops_goal") or "").strip()
+            query = (request.form.get("file_ops_query") or "").strip()
+            if not goal:
+                file_ops_status = "Выберите цель ассистента работы с файлами."
+                status = file_ops_status
+            else:
+                try:
+                    result_obj = run_file_ops_goal(goal=goal, query=query)
+                    file_ops_result = json.dumps(result_obj, ensure_ascii=False, indent=2)
+                    if result_obj.get("ok"):
+                        out_file = str(result_obj.get("output_file", "")).strip()
+                        file_ops_status = (
+                            f"Файловая задача выполнена: {goal}."
+                            + (f" Выход: {out_file}" if out_file else "")
+                        )
+                        status = file_ops_status
+                    else:
+                        file_ops_status = f"Ошибка file-ops: {result_obj.get('error', 'unknown')}"
+                        status = file_ops_status
+                except Exception as exc:
+                    file_ops_status = f"Ошибка file-ops ассистента: {exc}"
+                    status = file_ops_status
         elif action == "run_local_llm_checks":
             prompts = [local_llm_prompt_1, local_llm_prompt_2, local_llm_prompt_3]
             report = run_local_llm_checks(
@@ -1507,6 +1537,10 @@ def index():
         support_answer=support_answer,
         support_context_display=support_context_display,
         support_status=support_status,
+        file_ops_goal=file_ops_goal,
+        file_ops_query=file_ops_query,
+        file_ops_status=file_ops_status,
+        file_ops_result=file_ops_result,
         tool_to_server_map=tool_to_server_map,
         registered_servers=list(SERVERS.keys()),
         active_branch=active_branch,

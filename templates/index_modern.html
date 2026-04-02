@@ -927,6 +927,17 @@
       margin-bottom: 8px;
       line-height: 1.45;
     }
+    .file-ops-inline {
+      border: 1px solid #2f4677;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #122242, #101b34);
+      padding: 10px;
+      margin-top: 8px;
+    }
+    .file-ops-inline h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
 
     .tabs {
       display: flex;
@@ -1736,6 +1747,48 @@
           {% endif %}
         </section>
 
+        <section class="file-ops-inline" id="file-ops-assistant-section">
+          <h3>Ассистент работы с файлами проекта</h3>
+          <div class="mini">
+            Цель задается на уровне действия, ассистент сам читает/ищет/анализирует и сохраняет результат в файлы.
+            Минимум 2 сценария: поиск usage, обновление docs, подготовка diff, проверка инвариантов.
+          </div>
+          <div class="row-3">
+            <div class="field">
+              <label for="file_ops_goal">Цель</label>
+              <select id="file_ops_goal" name="file_ops_goal">
+                <option value="find_usages" {% if file_ops_goal == "find_usages" %}selected{% endif %}>find_usages (поиск по нескольким файлам)</option>
+                <option value="update_docs" {% if file_ops_goal == "update_docs" %}selected{% endif %}>update_docs (обновить документацию из кода)</option>
+                <option value="prepare_diff" {% if file_ops_goal == "prepare_diff" %}selected{% endif %}>prepare_diff (подготовить diff summary)</option>
+                <option value="check_invariants" {% if file_ops_goal == "check_invariants" %}selected{% endif %}>check_invariants (проверка правил файлов)</option>
+              </select>
+            </div>
+            <div class="field" style="grid-column: span 2;">
+              <label for="file_ops_query">Параметр (для find_usages)</label>
+              <input id="file_ops_query" name="file_ops_query" value="{{ file_ops_query }}" placeholder="например: get_support_ticket_context">
+            </div>
+          </div>
+          <div class="dev-assistant-actions">
+            <button type="submit" name="action" value="run_file_ops_goal" formnovalidate class="btn-primary dev-assistant-submit" id="file-ops-submit">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-label">Выполнить файловую задачу</span>
+            </button>
+          </div>
+          {% if file_ops_status %}
+          <div class="dev-assistant-status{% if file_ops_result and ('\"ok\": true' in file_ops_result) %} dev-assistant-status--ok{% elif 'Ошибка' in file_ops_status or 'error' in (file_ops_status|lower) %} dev-assistant-status--err{% endif %}" role="status" aria-live="polite">
+            {{ file_ops_status }}
+          </div>
+          {% endif %}
+          {% if file_ops_result %}
+          <details class="dev-assistant-sources" open>
+            <summary>Результат file-ops (JSON)</summary>
+            <div class="dev-assistant-sources-body">
+              <pre class="dev-assistant-pre dev-assistant-pre--context">{{ file_ops_result }}</pre>
+            </div>
+          </details>
+          {% endif %}
+        </section>
+
         <div class="composer">
           <label for="prompt">Message</label>
           <textarea id="prompt" name="prompt" required>{{ prompt }}</textarea>
@@ -2334,6 +2387,10 @@
     const supportAssistantSubmitLabel = supportAssistantSubmit
       ? supportAssistantSubmit.querySelector(".btn-label")
       : null;
+    const fileOpsSubmit = document.getElementById("file-ops-submit");
+    const fileOpsSubmitLabel = fileOpsSubmit
+      ? fileOpsSubmit.querySelector(".btn-label")
+      : null;
 
     form.addEventListener("submit", (event) => {
       const action = event.submitter ? event.submitter.value : "send";
@@ -2355,6 +2412,11 @@
         supportAssistantSubmit.classList.add("loading");
         supportAssistantSubmit.disabled = true;
         if (supportAssistantSubmitLabel) supportAssistantSubmitLabel.textContent = "Обрабатываю тикет…";
+      }
+      if (action === "run_file_ops_goal" && fileOpsSubmit && event.submitter === fileOpsSubmit) {
+        fileOpsSubmit.classList.add("loading");
+        fileOpsSubmit.disabled = true;
+        if (fileOpsSubmitLabel) fileOpsSubmitLabel.textContent = "Работаю с файлами…";
       }
     });
 
@@ -3101,6 +3163,13 @@
       }
       {% elif support_status %}
       if (panel && panel.tagName.toLowerCase() === "details") panel.open = true;
+      {% endif %}
+    })();
+
+    (function openFileOpsAfterReply() {
+      const panel = document.getElementById("file-ops-assistant-section");
+      {% if file_ops_result %}
+      if (panel) panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
       {% endif %}
     })();
   </script>

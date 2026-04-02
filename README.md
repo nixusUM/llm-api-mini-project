@@ -336,6 +336,32 @@ python3 web.py
 - контекст тикета из MCP JSON,
 - ответ ассистента по RAG (FAQ/docs) с учетом данных пользователя/тикета.
 
+## Ассистент для работы с файлами проекта
+
+Целевые сценарии (goal-driven, без ручного "открой файл X"):
+- `find_usages` — найти использования символа/API по нескольким файлам;
+- `update_docs` — обновить документацию на основе кода;
+- `prepare_diff` — подготовить сводку изменений и diff preview;
+- `check_invariants` — проверить файлы на базовые инварианты.
+
+Файлы:
+- `file_ops_assistant.py` — ядро операций с файлами;
+- `scripts/run_file_ops_assistant.py` — воспроизводимый CLI-запуск;
+- web UI блок **«Ассистент работы с файлами проекта»** над полем `Message`.
+
+### CLI (воспроизводимо)
+
+```bash
+python3 scripts/run_file_ops_assistant.py --goal find_usages --query get_support_ticket_context
+python3 scripts/run_file_ops_assistant.py --goal update_docs
+python3 scripts/run_file_ops_assistant.py --goal prepare_diff
+```
+
+Результаты сохраняются в файлы:
+- `data/pipeline_outputs/file_ops_usage_report.md`
+- `docs/MCP_TOOLS_INDEX.md`
+- `data/pipeline_outputs/file_ops_diff_summary.md`
+
 ## 3) Run Web
 
 ```bash
